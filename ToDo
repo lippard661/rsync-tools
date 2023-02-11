@@ -1,0 +1,8 @@
+BUGS:
+
+rsync-client/server generated unnecessary "Disallowed" logs whenever
+   "both" is used.
+
+FEATURES TO ADD:
+
+README file could use some expansion.

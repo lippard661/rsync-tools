@@ -1,0 +1,10 @@
+ChangeLog                       History of this package
+MANIFEST                        This file
+README                          Quick and dirty overview of package contents
+ToDo                            The To-Do list for the package
+rrsync				Wrapper with more options
+rsync-altroot.pl		Tool to rsync filesystems to /altroot
+rsync-client.pl			Script for rsyncing between systems
+rsync.conf			Sample config file for rsync-client.pl
+rsync_wrapper.sh		Wrapper for use with rsnapshot
+validate_rsync.sh		Wrapper for use with rsnapshot

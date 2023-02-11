@@ -1,0 +1,4 @@
+12 October 2021: Package created.
+8 February 2022: Added rrsync.
+9 February 2022: Improved rrsync logging.
+13-14 February 2022: Simplified logging line.

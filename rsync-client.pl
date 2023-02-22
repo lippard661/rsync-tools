@@ -36,6 +36,8 @@
 # Modified 2022-02-14 by Jim Lippard to finally do the server side correctly
 #    and not run twice with "both" in one invocation, just do what the client
 #    expects the first time.
+# Modified 2023-02-22 by Jim Lippard to die if the server side is invoked
+#    and there is no SSH_ORIGINAL_COMMAND.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -264,10 +266,10 @@ if ($CLIENT) {
     }
 }
 # server gets invoked twice if "both" is used, need to do what the
-# client expects.
+# client expects. [Should no longer be the case.]
 else {
     $command = $ENV{'SSH_ORIGINAL_COMMAND'};
-    if ($command =~ /--sender/) {
+    if (defined ($command) && $command =~ /--sender/) {
 	$push = 0;
     }
     else {
@@ -584,6 +586,7 @@ sub exec_server {
     }
 
     $command = $ENV{'SSH_ORIGINAL_COMMAND'};
+    die "Uninitialized environment variable SSH_ORIGINAL_COMMAND.\n" if (!defined ($command));
     $time = time();
     $time = localtime ($time);
 

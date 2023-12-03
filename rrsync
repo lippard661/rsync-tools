@@ -14,11 +14,16 @@
 #   and rsync-client/server.pl do their own thing to restrict.
 # Modified 13 February 2022 by Jim Lippard to log for both doas and ro.
 # Modified 14 February 2022 by Jim Lippard to log restricted subdir.
+# Modified 2 December 2023 by Jim Lippard to use pledge and unveil to
+#   enforce restrictions on OpenBSD.
 use strict;
 
 use Socket;
 use Cwd 'abs_path';
 use File::Glob ':glob';
+
+use if $^O eq "OpenBSD", "OpenBSD::Pledge";
+use if $^O eq "OpenBSD", "OpenBSD::Unveil";   
 
 # You may configure these values to your liking.  See also the section
 # of options if you want to disable any options that rsync accepts.
@@ -54,6 +59,28 @@ die "$0: Not invoked via sshd\n$Usage"	unless defined $command;
 die "$0: SSH_ORIGINAL_COMMAND='$command' is not rsync\n" unless $command =~ s/^rsync\s+//;
 our $am_sender = $command =~ /^--server\s+--sender\s/; # Restrictive on purpose!
 die "$0 -ro: sending to read-only server not allowed\n" if $ro && !$am_sender;
+
+# If on OpenBSD, enforce restricted directory and read-only.
+if ($^O eq 'OpenBSD') {
+    # unveil logfile, rsync command, doas.
+    unveil (LOGFILE, 'rw');
+    unveil (RSYNC, 'x');
+    if ($doas) {
+	unveil (DOAS, 'x');
+    }
+    
+    # unveil subdir and pledge
+    if ($ro) { # still need wpath because of log file.
+	pledge ("stdio,rpath,wpath,unveil");
+	unveil ($subdir, 'r');
+    }
+    else {
+	pledge ("stdio,rpath,wpath,cpath,unveil");
+	unveil ($subdir, 'rwc');
+    }
+
+    unveil ();
+}
 
 ### START of options data produced by the cull_options script. ###
 

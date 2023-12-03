@@ -38,6 +38,7 @@
 #    expects the first time.
 # Modified 2023-02-22 by Jim Lippard to die if the server side is invoked
 #    and there is no SSH_ORIGINAL_COMMAND.
+# Modified 2023-12-02 by Jim Lippard to use pledge and unveil on OpenBSD.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -160,6 +161,8 @@
 
 use strict;
 use Sys::Hostname;
+use if $^O eq "OpenBSD", "OpenBSD::Pledge";
+use if $^O eq "OpenBSD", "OpenBSD::Unveil";
 
 ### Global constants.
 
@@ -240,7 +243,7 @@ elsif ($ARGV[0] eq 'pull') {
     $push = 0;
 }
 elsif ($ARGV[0] eq 'both') {
-    $push = 1;
+    $push = 0;
     $both = 1;
 }
 else {
@@ -255,12 +258,14 @@ $other_host = $ARGV[1];
 # server side, look in the SSH_ORIGINAL_COMMAND for --sender -- if
 # present, do a pull, if not present, do a push.
 if ($CLIENT) {
-    # This could be a push or a pull, but if it's "both" it's a push.
+    # This could be a push or a pull, but if it's "both" it's a pull.
+    # (Reversed the order on both in order to allow pledge to add
+    # further restrictions after the pull.)
     &parse_config;
     &exec_client;
-    # And so, with both, we now need to do a pull.
+    # And so, with both, we now need to do a push.
     if ($both) {
-	$push = 0;
+	$push = 1;
 	&parse_config;
 	&exec_client;
     }
@@ -536,6 +541,52 @@ sub exec_client {
 	@cleanup_command = @dest_cleanup;
     }
 
+    # Use pledge and unveil to restrict access for client.
+    if ($^O eq 'OpenBSD') {
+	my ($path, $command);
+	if ($push) {
+	    pledge ('stdio,rpath,wpath,cpath,exec,unveil');
+	}
+	else {
+	    pledge ('stdio,rpath,wpath,cpath,exec,unveil,chown');
+	}
+	unveil ($RSYNC, 'x');
+	unveil ($SSH, 'x');
+	unveil ($RSYNC_USER_SSHDIR, 'r');
+	unveil ($LOG_FILE, 'rw');
+	foreach $path (@allowed_paths) {
+	    if ($push) {
+		unveil ($path, 'r');
+
+	    }
+	    else {
+		unveil ($path, 'rwc');	
+	    }
+	}
+
+	foreach $command (@setup_command) {
+	    $command =~ s/^(.*)\s+.*$/$1/;
+	    unveil ($command, 'x');
+	}
+	foreach $command (@cleanup_command) {
+	    $command =~ s/^(.*)\s+,*$/$1/;
+	    unveil ($command, 'x');
+	}
+	# Would be better to check for need first.
+	if ($USE_SUDO) {
+	    unveil ($SUDO, 'x');
+	}
+	else {
+	    unveil ($DOAS, 'x');
+	}
+
+	# If both, only lock down AFTER the pull has completed, since
+	# pull requires more access on client side. (This could also be
+	# a bit better by intentionally removing unneeded paths after
+	# the pull is complete.)
+	unveil () if (!$both || !$push);
+    }
+
     for ($idx = 0; $idx <= $#source_dirlist; $idx++) {
 	if ($setup_command[$idx]) {
 	    print "setup: $setup_command[$idx]\n" if ($DEBUG);
@@ -583,6 +634,45 @@ sub exec_server {
 	@allowed_paths = @source_dirlist;
 	@setup_command = @source_setup;
 	@cleanup_command = @source_cleanup;
+    }
+
+    # Use pledge and unveil to restrict access for server.
+    if ($^O eq 'OpenBSD') {
+	my ($path, $command);
+	if ($push) {
+	    pledge ('stdio,rpath,wpath,cpath,exec,unveil,chown');
+	}
+	else {
+	    pledge ('stdio,rpath,wpath,cpath,unveil,exec');    
+	}
+	unveil ($RSYNC, 'x');
+	unveil ($LOG_FILE, 'rw');
+	foreach $path (@allowed_paths) {
+	    if ($push) {
+		unveil ($path, 'rwc');
+	    }
+	    else {
+		unveil ($path, 'r');
+	    }
+	}
+
+	foreach $command (@setup_command) {
+	    $command =~ s/^(.*)\s+.*$/$1/;
+	    unveil ($command, 'x');
+	}
+	foreach $command (@cleanup_command) {
+	    $command =~ s/^(.*)\s+,*$/$1/;
+	    unveil ($command, 'x');
+	}
+	# Would be better to check for need first.
+	if ($USE_SUDO) {
+	    unveil ($SUDO, 'x');
+	}
+	else {
+	    unveil ($DOAS, 'x');
+	}
+
+	unveil ();
     }
 
     $command = $ENV{'SSH_ORIGINAL_COMMAND'};

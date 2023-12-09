@@ -161,8 +161,8 @@
 
 use strict;
 use Sys::Hostname;
-use if $^O eq "OpenBSD", "OpenBSD::Pledge";
-use if $^O eq "OpenBSD", "OpenBSD::Unveil";
+use if $^O eq "openbsd", "OpenBSD::Pledge";
+use if $^O eq "openbsd", "OpenBSD::Unveil";
 
 ### Global constants.
 
@@ -542,7 +542,7 @@ sub exec_client {
     }
 
     # Use pledge and unveil to restrict access for client.
-    if ($^O eq 'OpenBSD') {
+    if ($^O eq 'openbsd') {
 	my ($path, $command);
 	if ($push) {
 	    pledge ('stdio,rpath,wpath,cpath,exec,unveil');

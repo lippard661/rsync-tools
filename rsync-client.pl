@@ -553,6 +553,7 @@ sub exec_client {
 	unveil ($RSYNC, 'x');
 	unveil ($SSH, 'x');
 	unveil ($RSYNC_USER_SSHDIR, 'r');
+	unveil ($CONFIG_FILE, 'r');
 	unveil ($LOG_FILE, 'rwc');
 	foreach $path (@allowed_paths) {
 	    if ($push) {

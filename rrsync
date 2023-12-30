@@ -16,6 +16,7 @@
 # Modified 14 February 2022 by Jim Lippard to log restricted subdir.
 # Modified 2 December 2023 by Jim Lippard to use pledge and unveil to
 #   enforce restrictions on OpenBSD.
+# Modified 30 December 2023 by Jim Lippard to call pledge correctly.
 use strict;
 
 use Socket;
@@ -70,12 +71,12 @@ if ($^O eq 'openbsd') {
     }
     
     # unveil subdir and pledge
-    if ($ro) { # still need wpath because of log file.
-	pledge ("stdio,rpath,wpath,unveil");
+    if ($ro) { # still need wpath because of log file. stdio already included.
+	pledge ('rpath', 'wpath', 'unveil', 'access');
 	unveil ($subdir, 'r');
     }
     else {
-	pledge ("stdio,rpath,wpath,cpath,unveil");
+	pledge ('rpath', 'wpath', 'cpath', 'unveil', 'access');
 	unveil ($subdir, 'rwc');
     }
 

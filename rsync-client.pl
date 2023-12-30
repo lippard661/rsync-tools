@@ -39,6 +39,7 @@
 # Modified 2023-02-22 by Jim Lippard to die if the server side is invoked
 #    and there is no SSH_ORIGINAL_COMMAND.
 # Modified 2023-12-02 by Jim Lippard to use pledge and unveil on OpenBSD.
+# Modified 2023-12-30 by Jim Lippard to call pledge correctly.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -541,14 +542,14 @@ sub exec_client {
 	@cleanup_command = @dest_cleanup;
     }
 
-    # Use pledge and unveil to restrict access for client.
+    # Use pledge and unveil to restrict access for client. stdio already included.
     if ($^O eq 'openbsd') {
 	my ($path, $command);
 	if ($push) {
-	    pledge ('stdio,rpath,wpath,cpath,exec,unveil');
+	    pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'access');
 	}
 	else {
-	    pledge ('stdio,rpath,wpath,cpath,exec,unveil,chown');
+	    pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'chown', 'access');
 	}
 	unveil ($RSYNC, 'x');
 	unveil ($SSH, 'x');
@@ -637,16 +638,17 @@ sub exec_server {
 	@cleanup_command = @source_cleanup;
     }
 
-    # Use pledge and unveil to restrict access for server.
+    # Use pledge and unveil to restrict access for server. stdio already included.
     if ($^O eq 'OpenBSD') {
 	my ($path, $command);
 	if ($push) {
-	    pledge ('stdio,rpath,wpath,cpath,exec,unveil,chown');
+	    pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'chown', 'access');
 	}
 	else {
-	    pledge ('stdio,rpath,wpath,cpath,unveil,exec');    
+	    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'access');
 	}
 	unveil ($RSYNC, 'x');
+	unveil ($CONFIG_FILE, 'r');
 	unveil ($LOG_FILE, 'rw');
 	foreach $path (@allowed_paths) {
 	    if ($push) {

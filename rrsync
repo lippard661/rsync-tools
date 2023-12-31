@@ -17,6 +17,8 @@
 # Modified 2 December 2023 by Jim Lippard to use pledge and unveil to
 #   enforce restrictions on OpenBSD.
 # Modified 30 December 2023 by Jim Lippard to call pledge correctly.
+# Modified 31 December 2023 by Jim Lippard to expand unveil to cover
+#   /usr/share/zoneinfo.
 use strict;
 
 use Socket;
@@ -31,6 +33,7 @@ use if $^O eq "openbsd", "OpenBSD::Unveil";
 use constant RSYNC => '/usr/local/bin/rsync';
 use constant DOAS => '/usr/bin/doas';
 use constant LOGFILE => '/home/_rsyncu/rrsync.log';
+use constant ZONEINFO_DIR => '/usr/share/zoneinfo';
 
 my $Usage = <<EOM;
 Use 'command="$0 [-ro|-doas] SUBDIR"'
@@ -63,20 +66,23 @@ die "$0 -ro: sending to read-only server not allowed\n" if $ro && !$am_sender;
 
 # If on OpenBSD, enforce restricted directory and read-only.
 if ($^O eq 'openbsd') {
+    # need wpath and cpath because of log file even if ro. stdio is already
+    # included. Oddly, exec and proc are not required for doas.
+    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'access');
+    
     # unveil logfile, rsync command, doas.
-    unveil (LOGFILE, 'rw');
-    unveil (RSYNC, 'x');
+    unveil (LOGFILE, 'rwc');
+    unveil (ZONEINFO_DIR, 'r');
+    unveil (RSYNC, 'rx');
     if ($doas) {
-	unveil (DOAS, 'x');
+	unveil (DOAS, 'rx');
     }
     
-    # unveil subdir and pledge
+    # unveil subdir
     if ($ro) { # still need wpath because of log file. stdio already included.
-	pledge ('rpath', 'wpath', 'unveil', 'access');
 	unveil ($subdir, 'r');
     }
     else {
-	pledge ('rpath', 'wpath', 'cpath', 'unveil', 'access');
 	unveil ($subdir, 'rwc');
     }
 

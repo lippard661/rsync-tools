@@ -40,6 +40,8 @@
 #    and there is no SSH_ORIGINAL_COMMAND.
 # Modified 2023-12-02 by Jim Lippard to use pledge and unveil on OpenBSD.
 # Modified 2023-12-30 by Jim Lippard to call pledge correctly.
+# Modified 2023-12-31 by Jim Lippard to expand unveil to cover
+#    /usr/share/zoneinfo.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -186,6 +188,7 @@ my $DOAS = '/usr/bin/doas';
 my $RSYNC = '/usr/local/bin/rsync';
 my $SUDO = '/usr/bin/sudo';
 my $SSH = '/usr/bin/ssh';
+my $ZONEINFO_DIR = '/usr/share/zoneinfo';
 
 my $HOSTNAME = hostname();
 my $DOMAIN = '';
@@ -545,17 +548,15 @@ sub exec_client {
     # Use pledge and unveil to restrict access for client. stdio already included.
     if ($^O eq 'openbsd') {
 	my ($path, $command);
-	if ($push) {
-	    pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'access');
-	}
-	else {
-	    pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'chown', 'access');
-	}
-	unveil ($RSYNC, 'x');
-	unveil ($SSH, 'x');
+	
+	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'access');
+
+	unveil ($RSYNC, 'rx');
+	unveil ($SSH, 'rx');
 	unveil ($RSYNC_USER_SSHDIR, 'r');
 	unveil ($CONFIG_FILE, 'r');
 	unveil ($LOG_FILE, 'rwc');
+	unveil ($ZONEINFO_DIR, 'r');
 	foreach $path (@allowed_paths) {
 	    if ($push) {
 		unveil ($path, 'r');
@@ -568,18 +569,18 @@ sub exec_client {
 
 	foreach $command (@setup_command) {
 	    $command =~ s/^(.*)\s+.*$/$1/;
-	    unveil ($command, 'x');
+	    unveil ($command, 'rx');
 	}
 	foreach $command (@cleanup_command) {
 	    $command =~ s/^(.*)\s+,*$/$1/;
-	    unveil ($command, 'x');
+	    unveil ($command, 'rx');
 	}
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
-	    unveil ($SUDO, 'x');
+	    unveil ($SUDO, 'rx');
 	}
 	else {
-	    unveil ($DOAS, 'x');
+	    unveil ($DOAS, 'rx');
 	}
 
 	# If both, only lock down AFTER the pull has completed, since
@@ -641,13 +642,10 @@ sub exec_server {
     # Use pledge and unveil to restrict access for server. stdio already included.
     if ($^O eq 'OpenBSD') {
 	my ($path, $command);
-	if ($push) {
-	    pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'chown', 'access');
-	}
-	else {
-	    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'access');
-	}
-	unveil ($RSYNC, 'x');
+
+	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'access');
+
+	unveil ($RSYNC, 'rx');
 	unveil ($CONFIG_FILE, 'r');
 	unveil ($LOG_FILE, 'rw');
 	foreach $path (@allowed_paths) {
@@ -661,18 +659,18 @@ sub exec_server {
 
 	foreach $command (@setup_command) {
 	    $command =~ s/^(.*)\s+.*$/$1/;
-	    unveil ($command, 'x');
+	    unveil ($command, 'rx');
 	}
 	foreach $command (@cleanup_command) {
 	    $command =~ s/^(.*)\s+,*$/$1/;
-	    unveil ($command, 'x');
+	    unveil ($command, 'rx');
 	}
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
-	    unveil ($SUDO, 'x');
+	    unveil ($SUDO, 'rx');
 	}
 	else {
-	    unveil ($DOAS, 'x');
+	    unveil ($DOAS, 'rx');
 	}
 
 	unveil ();

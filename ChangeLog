@@ -5,3 +5,4 @@
 22 February 2022: Abort rsync-server.pl if no SSH_ORIGINAL_COMMAND env variable.
 3 December 2023: Added pledge/unveil for OpenBSD to rrsync and rsync-client.
 30 December 2023: Call pledge correctly.
+31 December 2023: Expand unveil for /usr/share/zoneinfo.

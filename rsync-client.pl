@@ -549,7 +549,7 @@ sub exec_client {
     if ($^O eq 'openbsd') {
 	my ($path, $command);
 	
-	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'access');
+	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";
 
 	unveil ($RSYNC, 'rx');
 	unveil ($SSH, 'rx');
@@ -643,7 +643,7 @@ sub exec_server {
     if ($^O eq 'OpenBSD') {
 	my ($path, $command);
 
-	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'access');
+	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc');
 
 	unveil ($RSYNC, 'rx');
 	unveil ($CONFIG_FILE, 'r');

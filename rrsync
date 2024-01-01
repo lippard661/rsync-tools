@@ -67,8 +67,8 @@ die "$0 -ro: sending to read-only server not allowed\n" if $ro && !$am_sender;
 # If on OpenBSD, enforce restricted directory and read-only.
 if ($^O eq 'openbsd') {
     # need wpath and cpath because of log file even if ro. stdio is already
-    # included. Oddly, exec and proc are not required for doas.
-    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'access');
+    # included.
+    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
     
     # unveil logfile, rsync command, doas.
     unveil (LOGFILE, 'rwc');

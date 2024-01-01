@@ -6,3 +6,4 @@
 3 December 2023: Added pledge/unveil for OpenBSD to rrsync and rsync-client.
 30 December 2023: Call pledge correctly.
 31 December 2023: Expand unveil for /usr/share/zoneinfo.
+1 January 2024: More corrections on pledge use.

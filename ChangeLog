@@ -7,3 +7,4 @@
 30 December 2023: Call pledge correctly.
 31 December 2023: Expand unveil for /usr/share/zoneinfo.
 1 January 2024: More corrections on pledge use.
+2 January 2024: Updated rrsync to be slightly more similar to python version.

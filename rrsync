@@ -19,6 +19,23 @@
 # Modified 30 December 2023 by Jim Lippard to call pledge correctly.
 # Modified 31 December 2023 by Jim Lippard to expand unveil to cover
 #   /usr/share/zoneinfo.
+# Modified 2 January 2024 by Jim Lippard to add support for rsync options
+#   found in python version: block-size, checksum-choice, compress-choice,
+#   copy-devices, debug, delete-delay, delete-missing-args, fake-super,
+#   fsync, group, groupmap, hard-links, iconv, ignore-existing,
+#   ignore-missing-args, ignore-times, info, links, log-file, max-alloc,
+#   mkpath, msgs2stderr, munge-links, new-compress, no-msgs2stderr,
+#   no-munge-links, no-w, old-compress, one-file-system, open-noatime,
+#   owner, perms, preallocate, recursive, skip-compress, stats, stderr,
+#   times, use-qsort, usermap, write-devices. Added seconds to log message.
+#   Short no args added: A J N U X q s y removed e f i . (dot is separator
+#     for e option used internally by rsync);
+#   Short with num added: @;
+#   Short disabled added: s; Short disabled subdir added: K L k
+#   Set log-file opt to -1 if ro.
+#   Parse arguments better (including -e. options).
+#   Not taken yet from python version: -wo, -munge, -no_del, -no_lock, locking,
+#   additional better arg parsing.
 use strict;
 
 use Socket;
@@ -66,24 +83,22 @@ die "$0 -ro: sending to read-only server not allowed\n" if $ro && !$am_sender;
 
 # If on OpenBSD, enforce restricted directory and read-only.
 if ($^O eq 'openbsd') {
-    # need wpath and cpath because of log file even if ro. stdio is already
-    # included.
-    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
-    
+    # unveil subdir and pledge. need wpath but not cpath for log file.
+    if ($ro) { # still need wpath because of log file. stdio already included.
+	pledge ('rpath', 'wpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
+	unveil ($subdir, 'r');
+    }
+    else {
+	pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
+	unveil ($subdir, 'rwc');
+    }
+
     # unveil logfile, rsync command, doas.
-    unveil (LOGFILE, 'rwc');
+    unveil (LOGFILE, 'rw');
     unveil (ZONEINFO_DIR, 'r');
     unveil (RSYNC, 'rx');
     if ($doas) {
 	unveil (DOAS, 'rx');
-    }
-    
-    # unveil subdir
-    if ($ro) { # still need wpath because of log file. stdio already included.
-	unveil ($subdir, 'r');
-    }
-    else {
-	unveil ($subdir, 'rwc');
     }
 
     unveil ();
@@ -95,11 +110,14 @@ if ($^O eq 'openbsd') {
 # and only in the option format that the stock rsync produces.
 
 # To disable a short-named option, add its letter to this string:
-our $short_disabled = '';
+our $short_disabled = 's';
+
+# These are disabled when the restricted dir is not "/":
+our $short_disabled_subdir = 'KLk';
 
 #our $short_no_arg = 'CDEHIKLORSWbcdgklmnoprtuvxz'; # DO NOT REMOVE ANY
-our $short_no_arg = 'CDEHIKLORSWbcdefgiklmnoprtuvxz.'; # DO NOT REMOVE ANY
-our $short_with_num = 'B'; # DO NOT REMOVE ANY
+our $short_no_arg = 'ACDEHIJKLNORSUWXbcdefgiklmnopqrstuvxyz'; # DO NOT REMOVE ANY
+our $short_with_num = '@B'; # DO NOT REMOVE ANY
 
 # To disable a long-named option, change its value to a -1.  The values mean:
 # 0 = the option has no arg; 1 = the arg doesn't need any checking; 2 = only
@@ -107,63 +125,106 @@ our $short_with_num = 'B'; # DO NOT REMOVE ANY
 our %long_opt = (
   'append' => 0,
   'backup-dir' => 2,
+  'block-size' => 1,
   'bwlimit' => 1,
+  'checksum-choice' => 1,
   'checksum-seed' => 1,
   'compare-dest' => 2,
+  'compress-choice' => 1,
   'compress-level' => 1,
   'copy-dest' => 2,
+  'copy-devices' => -1,
   'copy-unsafe-links' => 0,
   'daemon' => 0,
+  'debug' => 1,
   'delay-updates' => 0,
   'delete' => 0,
   'delete-after' => 0,
   'delete-before' => 0,
+  'delete-delay' => 0,
   'delete-during' => 0,
   'delete-excluded' => 0,
+  'delete-missing-args' => 0,
   'existing' => 0,
+  'fake-super' => 0,
   'files-from' => 3,
   'force' => 0,
   'from0' => 0,
+  'fsync' => 0,
   'fuzzy' => 0,
+  'group' => 0,
+  'groupmap' => 1,
+  'hard-links' => 0,
+  'iconv' => 1,
   'ignore-errors' => 0,
   'ignore-existing' => 0,
+  'ignore-missing-args' => 0,
+  'ignore-times' => 0,
+  'info' => 0,
   'inplace' => 0,
   'link-dest' => 2,
+  'links' => 0,
   'list-only' => 0,
+  'log-file' => 3,
   'log-format' => 1,
+  'max-alloc' => 1,
   'max-delete' => 1,
   'max-size' => 1,
   'min-size' => 1,
+  'mkpath' => 0,
   'modify-window' => 1,
+  'msgs2stderr' => 0,
+  'munge-links' => 0,
+  'new-compress' => 0,
   'no-implied-dirs' => 0,
+  'no-msgs2stderr' => 0,
+  'no-munge-links' => -1,
   'no-r' => 0,
   'no-relative' => 0,
   'no-specials' => 0,
+  'no-w' => 0,
   'numeric-ids' => 0,
+  'old-compress' => 0,
+  'one-file-system' => 0,
   'only-write-batch' => 1,
+  'open-noatime' => 0,
+  'owner' => 0,
   'partial' => 0,
   'partial-dir' => 2,
+  'perms' => 0,
+  'preallocate' => 0,
+  'recursive' => 0,
   'remove-sent-files' => $ro ? -1 : 0,
   'remove-source-files' => $ro ? -1 : 0,
   'safe-links' => 0,
   'sender' => 0,
   'server' => 0,
   'size-only' => 0,
+  'skip-compress' => 1,
   'specials' => 0,
+  'stats' => 0,
+  'stderr' => 1,
   'suffix' => 1,
   'super' => 0,
   'temp-dir' => 2,
   'timeout' => 1,
+  'times' => 0,
+  'use-qsort' => 0,
+  'usermap' => 1,
+  'write-devices' => -1,
 );
 
 ### END of options data produced by the cull_options script. ###
 
+$short_disabled .= $short_disabled_subdir if ($subdir ne '/');
 if ($short_disabled ne '') {
     $short_no_arg =~ s/[$short_disabled]//go;
     $short_with_num =~ s/[$short_disabled]//go;
 }
 $short_no_arg = "[$short_no_arg]" if length($short_no_arg) > 1;
 $short_with_num = "[$short_with_num]" if length($short_with_num) > 1;
+
+$long_opt{'log-file'} = -1 if ($ro);
 
 my $write_log = -f LOGFILE && open(LOG, '>>', LOGFILE);
 
@@ -183,7 +244,7 @@ while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
     if ($_ eq '.') {
       $in_options = 0;
     } else {
-      next if /^-$short_no_arg+$/o || /^-$short_with_num\d+$/o;
+      next if /^-(?=.)$short_no_arg*(e\d*\.\w*)?$/o || /^-$short_with_num\d+$/o;
 
       my($opt,$arg) = /^--([^=]+)(?:=(.*))?$/;
       my $disabled;
@@ -227,14 +288,14 @@ die "$0: invalid rsync-command syntax or options\n" if $in_options;
 @args = ( '.' ) if !@args;
 
 if ($write_log) {
-  my ($mm,$hh,$day,$month,$year) = (localtime)[1,2,3,4,5];
+  my ($ss,$mm,$hh,$day,$month,$year) = (localtime)[0,1,2,3,4,5];
   my $host = $ENV{SSH_CONNECTION} || 'unknown';
   $host =~ s/ .*//; # Keep only the client's IP addr
   $host =~ s/^::ffff://;
   $host = gethostbyaddr(inet_aton($host),AF_INET) if ($host =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
   $month += 1;
   $year += 1900;
-  printf LOG "%04d-%02d-%02d %02d:%02d %-13s [%s%s%s (%s)]\n", $year, $month, $day, $hh, $mm, $host, $doas ? '(doas) ' : '', $ro ? '(ro) ' : '', "@opts @args", $subdir;
+  printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-13s [%s%s%s (%s)]\n", $year, $month, $day, $hh, $mm, $ss, $host, $doas ? '(doas) ' : '', $ro ? '(ro) ' : '', "@opts @args", $subdir;
   close LOG;
 }
 

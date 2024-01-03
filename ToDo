@@ -1,7 +1,15 @@
 BUGS:
 
-rsync-client/server generated unnecessary "Disallowed" logs whenever
-   "both" is used.
+rsync-client/rsync-server:
+There is currently no way to distinguish on the server (receiving)
+side between different source dirs that share the same destination
+dir, which means that the destination-cleanup for the 2nd and later
+items in a list will never get executed, only the first one will
+match. Best workaround is probably to execute all the
+destination-cleanup commands for all invocations (presuming they don't
+have negative effects when they aren't the matching entry). Otherwise,
+some argument needs to be passed in the command line to specify the
+source information to be used.
 
 FEATURES TO ADD:
 

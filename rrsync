@@ -34,15 +34,14 @@
 #   Short disabled added: s; Short disabled subdir added: K L k
 #   Set log-file opt to -1 if ro.
 #   Parse arguments better (including -e. options).
-#   Added all options from python version: -wo, -munge, -no-del, -no-lock.
-#   (And locking dirs.)
+#   Added most options from python version: -wo, -munge, -no-del.
+#   Omitted -no-lock and locking dirs.
 
 use strict;
 
 use Socket;
 use Cwd 'abs_path';
 use File::Glob ':glob';
-use Fcntl qw(:DEFAULT :flock);
 
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";   
@@ -55,23 +54,22 @@ use constant LOGFILE => '/home/_rsyncu/rrsync.log';
 use constant ZONEINFO_DIR => '/usr/share/zoneinfo';
 
 my $Usage = <<EOM;
-Usage: rrsync [-ro | -wo] [-munge] [-no-del] [-no-lock] [-help] DIR
+Usage: rrsync [-ro | -wo] [-munge] [-no-del] [-help] DIR
 Use 'command="$0 [options] DIR"'
 	in front of lines in $ENV{HOME}/.ssh/authorized_keys
 EOM
 
 # parse rrsync command line
 my $arg;
-our ($doas, $ro, $wo, $munge, $no_del, $no_lock, $subdir);
+our ($doas, $ro, $wo, $munge, $no_del, $subdir);
 while (@ARGV) {
     $arg = shift;
     if ($arg eq '-doas') { # -doas = use doas
 	$doas = 1;
     }
-    elsif ($arg eq '-ro') { # -ro = Read-Only, implies -no-del and no-lock
+    elsif ($arg eq '-ro') { # -ro = Read-Only, implies -no-del
 	$ro = 1;
 	$no_del = 1;
-	$no_lock = 1;
     }
     elsif ($arg eq '-wo') { # -wo = Write-Only
 	$wo = 1;
@@ -81,10 +79,6 @@ while (@ARGV) {
     }
     elsif ($arg eq '-no-del') { # -no-del = disable --delete*, --remove* options
 	$no_del = 1;
-	$no_lock = 1;
-    }
-    elsif ($arg eq '-no-lock') { # -no-lock = do not lock dir
-	$no_lock = 1;
     }
     elsif ($arg eq '-help') { # -help = die with usage msg
 	die "$Usage\n";
@@ -125,18 +119,20 @@ die "$0 -wo: reading from write-only server not allowed\n" if $wo && $am_sender;
 
 # If on OpenBSD, enforce restricted directory and read-only.
 if ($^O eq 'openbsd') {
-    # unveil subdir and pledge. need wpath but not cpath for log file.
-    if ($ro) { # still need wpath because of log file. stdio already included.
-	pledge ('rpath', 'wpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
+    # still need wpath because of log file. stdio already included.
+    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
+
+    # unveil subdir.
+    if ($ro) {
 	unveil ($subdir, 'r');
     }
     else {
-	pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'flock', 'dns') || die "$0: Cannot pledge promises. $!\n";
 	unveil ($subdir, 'rwc');
     }
 
-    # unveil logfile, rsync command, doas.
-    unveil (LOGFILE, 'rw');
+    # unveil logfile, zoneinfo, resolv.conf, rsync command, doas.
+    # need c for append, oddly.
+    unveil (LOGFILE, 'rwc');
     unveil (ZONEINFO_DIR, 'r');
     unveil (RSYNC, 'rx');
     if ($doas) {
@@ -349,12 +345,6 @@ if ($write_log) {
   $year += 1900;
   printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '';
   close LOG;
-}
-
-# lock if not no_lock, lock or die
-if (!$no_lock) {
-    opendir (DIR, $subdir) or die "cannot opendir $subdir. $!\n";
-    die "cannot lock $subdir\n" unless (flock (DIR, LOCK_EX | LOCK_NB));
 }
 
 # Note: This assumes that the rsync protocol will not be maliciously hijacked.

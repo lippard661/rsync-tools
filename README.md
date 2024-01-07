@@ -5,4 +5,4 @@ Includes an updated perl version of rrsync that has most but not all of the feat
 
 This is the release of 2 January 2024 from https://www.discord.org/lippard/software/
 
-rsync-tools-20240102.tgz is a Legion of Dynamic Discord signify-signed OpenBSD package. Signify public key is https://www.discord.org/lippard/software/discord.org.pub
+rsync-tools-20240102.tgz is a Legion of Dynamic Discord signify-signed OpenBSD package. Signify public key is https://www.discord.org/lippard/software/discord.org-2024-pkg.pub

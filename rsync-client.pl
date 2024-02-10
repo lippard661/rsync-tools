@@ -42,6 +42,9 @@
 # Modified 2023-12-30 by Jim Lippard to call pledge correctly.
 # Modified 2023-12-31 by Jim Lippard to expand unveil to cover
 #    /usr/share/zoneinfo.
+# Modified 2024-01-03 by Jim Lippard to use new perl open format.
+# Modified 2024-02-10 by Jim Lippard to unveil setup/cleanup commands
+#    properly (ignore ""/0).
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -322,7 +325,7 @@ sub parse_config {
     $have_dest_setup = 0;
     $have_dest_cleanup = 0;
 
-    open (CONFIG, $CONFIG_FILE) || die "Cannot open config file. $CONFIG_FILE $!\n";
+    open (CONFIG, '<', $CONFIG_FILE) || die "Cannot open config file. $CONFIG_FILE $!\n";
     while (<CONFIG>) {
 	if (/^\s*#|^$/) {
 	}
@@ -490,7 +493,7 @@ sub parse_config {
 		$time = time();
 		$time = localtime ($time);
 
-		open (LOG, ">>$LOG_FILE");
+		open (LOG, '>>', $LOG_FILE);
 
 		print LOG "$time $0 hostname=$HOSTNAME, other_host=$other_host, CLIENT=$CLIENT, push=$push, both=$both, No matching entry in config file.\n";
 		close (LOG);
@@ -568,12 +571,16 @@ sub exec_client {
 	}
 
 	foreach $command (@setup_command) {
-	    $command =~ s/^(.*)\s+.*$/$1/;
-	    unveil ($command, 'rx');
+	    if ($command) {
+		$command =~ s/^(.*)\s+.*$/$1/;
+		unveil ($command, 'rx');
+	    }
 	}
 	foreach $command (@cleanup_command) {
-	    $command =~ s/^(.*)\s+,*$/$1/;
-	    unveil ($command, 'rx');
+	    if ($command) {
+		$command =~ s/^(.*)\s+.*$/$1/;
+		unveil ($command, 'rx');
+	    }
 	}
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
@@ -681,7 +688,7 @@ sub exec_server {
     $time = time();
     $time = localtime ($time);
 
-    open (LOG, ">>$LOG_FILE");
+    open (LOG, '>>', $LOG_FILE);
 
     print LOG "$time $0 $ENV{'SSH_CONNECTION'} ***New command issued: $command\n";
 

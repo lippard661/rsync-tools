@@ -8,3 +8,5 @@
 31 December 2023: Expand unveil for /usr/share/zoneinfo.
 1 January 2024: More corrections on pledge use.
 2 January 2024: Updated rrsync to be more similar to python version.
+4 January 2024: Updated rrsync error messages, rsync-client perl file open style.
+10 February 2024: Improve unveiling of setup/cleanup commands, fix bug.

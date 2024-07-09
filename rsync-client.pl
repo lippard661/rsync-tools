@@ -45,6 +45,8 @@
 # Modified 2024-01-03 by Jim Lippard to use new perl open format.
 # Modified 2024-02-10 by Jim Lippard to unveil setup/cleanup commands
 #    properly (ignore ""/0).
+# Modified 2024-07-09 by Jim Lippard to unveil /bin/sh if there's an *
+#    in a dirlist, and to unveil containing dirs.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -166,6 +168,7 @@
 ### Required packages.
 
 use strict;
+use File::Basename;
 use Sys::Hostname;
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";
@@ -191,6 +194,7 @@ my $DOAS = '/usr/bin/doas';
 my $RSYNC = '/usr/local/bin/rsync';
 my $SUDO = '/usr/bin/sudo';
 my $SSH = '/usr/bin/ssh';
+my $SHELL = '/bin/sh';
 my $ZONEINFO_DIR = '/usr/share/zoneinfo';
 
 my $HOSTNAME = hostname();
@@ -550,7 +554,9 @@ sub exec_client {
 
     # Use pledge and unveil to restrict access for client. stdio already included.
     if ($^O eq 'openbsd') {
-	my ($path, $command);
+	my ($path, $command, $need_shell);
+
+	$need_shell = 0;
 	
 	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";
 
@@ -561,6 +567,8 @@ sub exec_client {
 	unveil ($LOG_FILE, 'rwc');
 	unveil ($ZONEINFO_DIR, 'r');
 	foreach $path (@allowed_paths) {
+	    $need_shell = 1 if ($path =~ /\*/);
+	    $path = dirname ($path) if ($path !~ /\/$/);
 	    if ($push) {
 		unveil ($path, 'r');
 
@@ -569,6 +577,7 @@ sub exec_client {
 		unveil ($path, 'rwc');	
 	    }
 	}
+	unveil ($SHELL, 'rx') if ($need_shell);
 
 	foreach $command (@setup_command) {
 	    if ($command) {
@@ -648,7 +657,9 @@ sub exec_server {
 
     # Use pledge and unveil to restrict access for server. stdio already included.
     if ($^O eq 'OpenBSD') {
-	my ($path, $command);
+	my ($path, $command, $need_shell);
+
+	$need_shell = 0;
 
 	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc');
 
@@ -656,6 +667,8 @@ sub exec_server {
 	unveil ($CONFIG_FILE, 'r');
 	unveil ($LOG_FILE, 'rw');
 	foreach $path (@allowed_paths) {
+	    $need_shell = 1 if ($path =~ /\*/);
+	    $path = dirname ($path) if ($path !~ /\/$/);
 	    if ($push) {
 		unveil ($path, 'rwc');
 	    }
@@ -663,6 +676,7 @@ sub exec_server {
 		unveil ($path, 'r');
 	    }
 	}
+	unveil ($SHELL, 'rx') if ($need_shell);
 
 	foreach $command (@setup_command) {
 	    $command =~ s/^(.*)\s+.*$/$1/;

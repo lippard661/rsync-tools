@@ -11,6 +11,11 @@ have negative effects when they aren't the matching entry). Otherwise,
 some argument needs to be passed in the command line to specify the
 source information to be used.
 
+If file path to send includes *, /bin/sh needs to be unveiled.
+This is now done in dirpath checking; also unveiling now done
+for the containing dir of dirpath doesn't end with a /.  The
+dirlist function could stand to do some validation.
+
 FEATURES TO ADD:
 
 README file could use some expansion.

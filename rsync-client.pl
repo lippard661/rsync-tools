@@ -47,6 +47,10 @@
 #    properly (ignore ""/0).
 # Modified 2024-07-09 by Jim Lippard to unveil /bin/sh if there's an *
 #    in a dirlist, and to unveil containing dirs.
+# Modified 2024-07-10 by Jim Lippard to add some minimal validation
+#    on dirlists, restricting * to filenames (not directories) and
+#    stopping unobfuscated directory traversal. The local config file
+#    is still highly trusted and access should be restricted.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -221,6 +225,10 @@ my @POSSIBLE_SERVER_OPTIONS = ('-vlogDtprz', '-vlogDtpRz', '-vlogDtprze.', '-vlo
 # The "f" disappears in rsync 3.1.0.
 # The "C" option appeared with rsync 3.1.2.
 
+# For dirlist subroutine; could add other forms of validation in
+# the future for rsync options, commands, etc.
+my $VALIDATE_DIRLIST = 1;
+
 ### Variables.
 
 my ($push, $both, $other_host, $source, $destination,
@@ -350,12 +358,12 @@ sub parse_config {
 	}
 	elsif (/^\s*source-dirlist:\s+(.*)$/) {
 	    &check_arg ('source-dirlist', $1, $have_source_dirlist);
-	    @source_dirlist = &dirlist ($1);
+	    @source_dirlist = &dirlist ($1, $VALIDATE_DIRLIST);
 	    $have_source_dirlist = 1;
 	}
 	elsif (/^\s*destination-dirlist:\s+(.*)$/) {
 	    &check_arg ('destination-dirlist', $1, $have_destination_dirlist);
-	    @destination_dirlist = &dirlist ($1);
+	    @destination_dirlist = &dirlist ($1, $VALIDATE_DIRLIST);
 	    $have_destination_dirlist = 1;
 	}
 	elsif (/^\s*rsync-options:\s+(.*)$/) {
@@ -793,8 +801,9 @@ sub check_arg {
 }
 
 # Subroutine to return array of directories from a list.
+# Also used by command lists, so only validate when requested.
 sub dirlist {
-    my ($arg) = @_;
+    my ($arg, $validate) = @_;
     my (@dirlist, $item);
 
     @dirlist = split (/,\s+/, $arg);
@@ -802,8 +811,45 @@ sub dirlist {
 	if ($item eq "\"\"") {
 	    $item = 0;
 	}
+	elsif ($validate && !&valid_dir ($item)) {
+	    die "Configuration file has invalid dir \"$item\" in dirlist \"$arg\".\n";
+	}
     }
     return (@dirlist);
+}
+
+# Subroutine to do some minimal validation on dirs in dirlist.
+sub valid_dir {
+    my ($path) = @_;
+    my ($dir, $file);
+
+    # No directory traversal.
+    if ($path =~ /\.\./) {
+	return 0;
+    }
+
+    $dir = dirname ($path);
+    $file = basename ($path);
+
+    # Check dir portion.
+    if ($dir !~ /^[A-Za-z0-9\._\-\/]+$/) {
+	return 0;
+    }
+
+    # If path ends in /, treat file like dir.
+    if ($path =~ /\/$/) {
+	if ($file !~ /^[A-Za-z0-9\._\-\/]+$/) {
+	    return 0;
+	}
+	return 1;
+    }
+
+    # Otherwise, allow *.
+    elsif ($file !~ /^[A-Za-z0-9\._\-\/\*]+$/) {
+	return 0;
+    }
+
+    return 1;
 }
 
 # Subroutine to return array of options from rsync_options.

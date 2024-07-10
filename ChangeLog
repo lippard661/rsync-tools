@@ -10,4 +10,4 @@
 2 January 2024: Updated rrsync to be more similar to python version.
 4 January 2024: Updated rrsync error messages, rsync-client perl file open style.
 10 February 2024: rsync-client: Improve unveiling of setup/cleanup commands, fix bug.
-9 July 2024: rsync-client: unveil /bin/sh when * in dirlist.
+10 July 2024: rsync-client: unveil /bin/sh when * in dirlist & do minimal dirlist validation.

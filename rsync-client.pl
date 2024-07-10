@@ -50,7 +50,8 @@
 # Modified 2024-07-10 by Jim Lippard to add some minimal validation
 #    on dirlists, restricting * to filenames (not directories) and
 #    stopping unobfuscated directory traversal. The local config file
-#    is still highly trusted and access should be restricted.
+#    is still highly trusted and access should be restricted. Fixed bug
+#    in client unveiling of paths and locking of unveil.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -552,12 +553,14 @@ sub exec_client {
 	$destination_info = "$RSYNC_USER\@$other_host:"; 
 	@setup_command = @source_setup;
 	@cleanup_command = @source_cleanup;
+	@allowed_paths = @source_dirlist;
     }
     else {
 	$source_info = "$RSYNC_USER\@$other_host:";
 	$destination_info = "";
 	@setup_command = @dest_setup;
 	@cleanup_command = @dest_cleanup;
+	@allowed_paths = @destination_dirlist;
     }
 
     # Use pledge and unveil to restrict access for client. stdio already included.
@@ -568,12 +571,7 @@ sub exec_client {
 	
 	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";
 
-	unveil ($RSYNC, 'rx');
-	unveil ($SSH, 'rx');
-	unveil ($RSYNC_USER_SSHDIR, 'r');
-	unveil ($CONFIG_FILE, 'r');
-	unveil ($LOG_FILE, 'rwc');
-	unveil ($ZONEINFO_DIR, 'r');
+	# Unveil dir paths.
 	foreach $path (@allowed_paths) {
 	    $need_shell = 1 if ($path =~ /\*/);
 	    $path = dirname ($path) if ($path !~ /\/$/);
@@ -585,7 +583,15 @@ sub exec_client {
 		unveil ($path, 'rwc');	
 	    }
 	}
+
+	# Unveil commands.
 	unveil ($SHELL, 'rx') if ($need_shell);
+	unveil ($RSYNC, 'rx');
+	unveil ($SSH, 'rx');
+	unveil ($RSYNC_USER_SSHDIR, 'r');
+	unveil ($CONFIG_FILE, 'r');
+	unveil ($LOG_FILE, 'rwc');
+	unveil ($ZONEINFO_DIR, 'r');
 
 	foreach $command (@setup_command) {
 	    if ($command) {
@@ -611,7 +617,7 @@ sub exec_client {
 	# pull requires more access on client side. (This could also be
 	# a bit better by intentionally removing unneeded paths after
 	# the pull is complete.)
-	unveil () if (!$both || !$push);
+	unveil () if (!$both || $push);
     }
 
     for ($idx = 0; $idx <= $#source_dirlist; $idx++) {

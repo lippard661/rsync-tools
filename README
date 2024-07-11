@@ -1,4 +1,4 @@
-rsync-tools-20240102
+rsync-tools-20240210
   rsync-client.pl / rsync-server.pl: For rsyncing files between systems on
      a regular basis, where doas/sudo may be required, using a non-privileged
      _rsyncu user. Uses pledge/unveil on OpenBSD.
@@ -8,4 +8,5 @@ rsync-tools-20240102
      file systems on a local machine.
   rrsync -- open source tool for restricting rsync via authorized_keys
      forced commands; can force read-only access or limit to particular
-     directory. Uses pledge/unveil on OpenBSD.
+     directory. Uses pledge/unveil on OpenBSD. perl version updated to
+     include most of the python version features.

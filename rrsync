@@ -36,12 +36,16 @@
 #   Parse arguments better (including -e. options).
 #   Added most options from python version: -wo, -munge, -no-del.
 #   Omitted -no-lock and locking dirs.
+# Modified 3 January 2024 by Jim Lippard to add wo, munge, no-del to logging.
+# Modified 30 July 2024 by Jim Lippard to add -no-lock and locking, and
+#    reuse additional checks from this patch: https://attachments.samba.org/attachment.cgi?id=14662
 
 use strict;
 
 use Socket;
 use Cwd 'abs_path';
 use File::Glob ':glob';
+use Fcntl ':flock';
 
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";   
@@ -51,25 +55,27 @@ use if $^O eq "openbsd", "OpenBSD::Unveil";
 use constant RSYNC => '/usr/local/bin/rsync';
 use constant DOAS => '/usr/bin/doas';
 use constant LOGFILE => '/home/_rsyncu/rrsync.log';
+use constant LOCKFILE => '/home/_rsyncu/.rrsync.lock';
 use constant ZONEINFO_DIR => '/usr/share/zoneinfo';
 
 my $Usage = <<EOM;
-Usage: rrsync [-ro | -wo] [-munge] [-no-del] [-help] DIR
+Usage: rrsync [-ro | -wo] [-munge] [-no-del] [-no-lock] [-help] DIR
 Use 'command="$0 [options] DIR"'
 	in front of lines in $ENV{HOME}/.ssh/authorized_keys
 EOM
 
 # parse rrsync command line
 my $arg;
-our ($doas, $ro, $wo, $munge, $no_del, $subdir);
+our ($doas, $ro, $wo, $munge, $no_del, $no_lock, $subdir);
 while (@ARGV) {
     $arg = shift;
     if ($arg eq '-doas') { # -doas = use doas
 	$doas = 1;
     }
-    elsif ($arg eq '-ro') { # -ro = Read-Only, implies -no-del
+    elsif ($arg eq '-ro') { # -ro = Read-Only, implies -no-del -no-lock
 	$ro = 1;
 	$no_del = 1;
+	$no_lock = 1;
     }
     elsif ($arg eq '-wo') { # -wo = Write-Only
 	$wo = 1;
@@ -79,6 +85,9 @@ while (@ARGV) {
     }
     elsif ($arg eq '-no-del') { # -no-del = disable --delete*, --remove* options
 	$no_del = 1;
+    }
+    elsif ($arg eq '-no-lock') { # -no-lock = do not use lock
+	$no_lock = 1;
     }
     elsif ($arg eq '-help') { # -help = die with usage msg
 	die "$Usage\n";
@@ -119,8 +128,10 @@ die "$0 -wo: reading from write-only server not allowed\n" if $wo && $am_sender;
 
 # If on OpenBSD, enforce restricted directory and read-only.
 if ($^O eq 'openbsd') {
+    my @promises = ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'dns');
+    push (@promises, 'flock') if (!$no_lock);
     # still need wpath because of log file. stdio already included.
-    pledge ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc', 'dns') || die "$0: Cannot pledge promises. $!\n";
+    pledge (@promises) || die "$0: Cannot pledge promises. $!\n";
 
     # unveil subdir.
     if ($ro) {
@@ -133,6 +144,7 @@ if ($^O eq 'openbsd') {
     # unveil logfile, zoneinfo, resolv.conf, rsync command, doas.
     # need c for append, oddly.
     unveil (LOGFILE, 'rwc');
+    unveil (LOCKFILE, 'rwc') if (!$no_lock);
     unveil (ZONEINFO_DIR, 'r');
     unveil (RSYNC, 'rx');
     if ($doas) {
@@ -253,7 +265,12 @@ our %long_opt = (
 
 ### END of options data produced by the cull_options script. ###
 
-$short_disabled .= $short_disabled_subdir if ($subdir ne '/');
+if ($subdir ne '/') {
+    # Disable anything that might follow a symlink out of the restricted dir
+    $short_disabled .= $short_disabled_subdir;
+    $long_opt{'copy-unsafe-links'} = -1;
+    $long_opt{'no-implied-dirs'} = -1;
+}
 if ($short_disabled ne '') {
     $short_no_arg =~ s/[$short_disabled]//go;
     $short_with_num =~ s/[$short_disabled]//go;
@@ -272,6 +289,11 @@ if ($no_del) {
 }
 
 my $write_log = -f LOGFILE && open(LOG, '>>', LOGFILE);
+
+if (!$no_lock) {
+    open (LOCK_FH, '>>', LOCKFILE) or die "open lockfile: $!";
+    flock LOCK_FH, ($am_sender ? LOCK_SH : LOCK_EX) or die "lock lockfile: $!";
+}
 
 chdir($subdir) or die "$0: Unable to chdir to restricted dir: $!\n";
 
@@ -324,6 +346,7 @@ while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
       s#^/##;
       s#^$#.#;
       die "Do not use .. in any path!\n" if m#(^|/)\\?\.\\?\.(\\?/|$)#;
+      die "$0: arg not under subdir\n" unless abs_is_under($_, $subdir);
     }
     push(@args, bsd_glob($_, GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE));
   }
@@ -343,16 +366,28 @@ if ($write_log) {
   $host = gethostbyaddr(inet_aton($host),AF_INET) if ($host =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
   $month += 1;
   $year += 1900;
-  printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '';
+  printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '';;
   close LOG;
 }
 
 # Note: This assumes that the rsync protocol will not be maliciously hijacked.
 if ($doas) {
-        exec(DOAS, RSYNC, @opts, @args) or die "exec(rsync @opts @args) failed: $? $!";
+    exit system(DOAS, RSYNC, @opts, '--', @args);
 }
 else {
-    exec(RSYNC, @opts, @args) or die "exec(rsync @opts @args) failed: $? $!";
+    exit system(RSYNC, @opts, '--', @args);
+}
+
+sub abs_is_under {
+    my ($path, $under_abspath) = @_;
+    for (;;) {
+	my $a = abs_path($path);
+	if (defined $a) {
+	    return $a =~ m{^\Q$under_abspath\E(/|$)};
+	}
+	die "abs_path failed on .: $!" if $path eq '.';
+	$path =~ s{/[^/]*$}{} or $path = '.';
+    }
 }
 
 sub check_arg
@@ -364,6 +399,8 @@ sub check_arg
     die "Do not use .. in --$opt; anchor the path at the root of your restricted dir.\n"
       if $arg =~ m#(^|/)\.\.(/|$)#;
     $arg =~ s#^/#$subdir/#;
+    die "--$opt value outside restricted dir.\n"
+	unless abs_is_under($arg, $subdir);
   }
   $arg;
 }

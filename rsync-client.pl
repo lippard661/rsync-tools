@@ -52,6 +52,7 @@
 #    stopping unobfuscated directory traversal. The local config file
 #    is still highly trusted and access should be restricted. Fixed bug
 #    in client unveiling of paths and locking of unveil.
+# Modified 2024-08-29 by Jim Lippard for error checking on all pledge calls.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -569,7 +570,7 @@ sub exec_client {
 
 	$need_shell = 0;
 	
-	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";
+	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'proc') || die "Cannot pledge promises. $!\n";
 
 	# Unveil dir paths.
 	foreach $path (@allowed_paths) {
@@ -675,7 +676,7 @@ sub exec_server {
 
 	$need_shell = 0;
 
-	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc');
+	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";;
 
 	unveil ($RSYNC, 'rx');
 	unveil ($CONFIG_FILE, 'r');

@@ -21,6 +21,8 @@
 # Modified 2013-01-08 by Jim Lippard to rely more on fstab information.
 #   Needs an update to pull mount options from fstab, too.
 # Modified 2021-10-12 by Jim Lippard to rename to rsync-altroot.pl
+# Modified 2024-01-03 by Jim Lippard to use newer perl open format.
+# Modified 2024-09-01 by Jim Lippard to use pledge and unveil on OpenBSD.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -37,6 +39,8 @@
 
 use strict;
 use Getopt::Long;
+use if $^O eq "openbsd", "OpenBSD::Pledge";
+use if $^O eq "openbsd", "OpenBSD::Unveil";
 
 # '' = '/'
 
@@ -110,8 +114,21 @@ if ($#ARGV != -1) {
 
 $rsync_target = $ALTROOT;
 
+# Use pledge and unveil on OpenBSD.
+if ($^O eq 'openbsd') {
+    my @promises = ('rpath', 'exec', 'proc', 'unveil');
+    push (@promises, 'wpath', 'cpath') if ($rsync);
+    pledge (@promises) || die "Cannot pledge promises. $!\n";
+    unveil ('/', 'r');
+    unveil ($ALTROOT, 'rwc');
+    unveil ($RSYNC, 'rx') if ($rsync);
+    unveil ($MOUNT, 'rx') if ($mount);
+    unveil ($UNMOUNT, 'rx') if ($unmount);
+    unveil ();
+}
+
 # Get device names from /etc/fstab.
-if (open (FSTAB_HANDLE, "$FSTAB")) {
+if (open (FSTAB_HANDLE, '<', $FSTAB)) {
     while (<FSTAB_HANDLE>) {
 	chop;
 	if (/^[#]*([\S]+)\s+([\S]+)\s*/) {

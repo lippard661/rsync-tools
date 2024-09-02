@@ -23,6 +23,8 @@
 # Modified 2021-10-12 by Jim Lippard to rename to rsync-altroot.pl
 # Modified 2024-01-03 by Jim Lippard to use newer perl open format.
 # Modified 2024-09-01 by Jim Lippard to use pledge and unveil on OpenBSD.
+# Modified 2024-09-02 by Jim Lippard to avoid unveil errors from need for
+#   /bin/sh by passing arguments individually in system calls.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -151,7 +153,7 @@ if ($mount) {
     foreach $filesystem (@FILESYSTEMS) {
 	if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 	    print "Mounting $device{$filesystem} on /altroot$filesystem\n";
-	    system ("$MOUNT $device{$filesystem} /altroot$filesystem") if (!$DEBUG);
+	    system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem") if (!$DEBUG);
 	}
     }
 }
@@ -163,10 +165,10 @@ if ($rsync) {
 	if (-d $directory || $directory eq '') {
 	    print "rsync on $directory to $rsync_target\n";
 	    if ($directory eq '/etc') {
-		system ("$RSYNC -avz --exclude '*scache.*' --delete $directory $rsync_target") if (!$DEBUG);
+		system ("$RSYNC", '-avz', '--exclude', "'*scache.*'", '--delete', "$directory", "$rsync_target") if (!$DEBUG);
 	    }
 	    else {
-		system ("$RSYNC -avz --delete $directory $rsync_target") if (!$DEBUG);
+		system ("$RSYNC", '-avz', '--delete', "$directory", "$rsync_target") if (!$DEBUG);
 	    }
 	}
     }
@@ -176,7 +178,7 @@ if ($rsync) {
 	if (defined ($device{$directory}) && (-d $directory || $directory eq '')) {
 	    if ($directory ne '' && $directory ne '/usr/local') {
 		print "rsync from $directory to $rsync_target\n";
-		system ("$RSYNC -avz --delete $directory $rsync_target") if (!$DEBUG);
+		system ("$RSYNC", '-avz', '--delete', "$directory", "$rsync_target") if (!$DEBUG);
 	    }
 	}
     }
@@ -186,7 +188,7 @@ if ($unmount) {
 	foreach $filesystem (reverse (@FILESYSTEMS)) {
 	    if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 		print "Unmounting /altroot$filesystem\n";
-		system ("$UNMOUNT /altroot$filesystem") if (!$DEBUG);
+		system ("$UNMOUNT", "/altroot$filesystem") if (!$DEBUG);
 	    }
     }
 }

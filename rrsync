@@ -39,6 +39,7 @@
 # Modified 3 January 2024 by Jim Lippard to add wo, munge, no-del to logging.
 # Modified 30 July 2024 by Jim Lippard to add -no-lock and locking, and
 #    reuse additional checks from this patch: https://attachments.samba.org/attachment.cgi?id=14662
+# Modified 8 October 2024 by Jim Lippard to change no-w to no-W.
 
 use strict;
 
@@ -231,7 +232,7 @@ our %long_opt = (
   'no-r' => 0,
   'no-relative' => 0,
   'no-specials' => 0,
-  'no-w' => 0,
+  'no-W' => 0,
   'numeric-ids' => 0,
   'old-compress' => 0,
   'one-file-system' => 0,

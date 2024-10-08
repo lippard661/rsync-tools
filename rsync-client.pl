@@ -53,6 +53,7 @@
 #    is still highly trusted and access should be restricted. Fixed bug
 #    in client unveiling of paths and locking of unveil.
 # Modified 2024-08-29 by Jim Lippard for error checking on all pledge calls.
+# Modified 2024-10-08 by Jim Lippard to support new rsync 3.3.0 "s" option.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -220,12 +221,13 @@ elsif ($0 =~ /rsync-server.pl$/) {
     $CLIENT = 0;
 }
 
-my @POSSIBLE_SERVER_OPTIONS = ('-vlogDtprz', '-vlogDtpRz', '-vlogDtprze.', '-vlogDtprze.i', '-vlogDtprze.f', '-vlogDtprze.if', '-vlogDtprze.iLf', '-vlogDtprze.iL', '-vlogDtprze.iLfx', '-vlogDtprze.iLfxC', '-vlogDtprze.iLfxCIvu');
+my @POSSIBLE_SERVER_OPTIONS = ('-vlogDtprz', '-vlogDtpRz', '-vlogDtprze.', '-vlogDtprze.i', '-vlogDtprze.f', '-vlogDtprze.if', '-vlogDtprze.iLf', '-vlogDtprze.iL', '-vlogDtprze.iLfx', '-vlogDtprze.iLfxC', '-vlogDtprze.iLfxCIvu', '-vlogDtprze.iLsfxCIvu');
 # The "R" option is for --relative; the e.[i] options only appear after rsync 3.0.; .f only in rsync 3.0.7+
 # I probably haven't made this work for 3.0 uses of --relative.
 # The "L" option appeared with rsync 3.0.8.
 # The "f" disappears in rsync 3.1.0.
 # The "C" option appeared with rsync 3.1.2.
+# the "s" option after the dot appeared with rsync 3.3.0.
 
 # For dirlist subroutine; could add other forms of validation in
 # the future for rsync options, commands, etc.

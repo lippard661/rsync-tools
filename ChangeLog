@@ -14,3 +14,5 @@
 30 July 2024: Updated rrsync for locking and -no-lock, additional checks.
 1 September 2024: Added pledge/unveil to rsync-altroot. Fixed minor bug
 	(pledge error reporting) in rsync-client.pl.
+8 October 2024: Added new s after dot for rsync-client.pl for rsync 3.3.0,
+	changed no-w to no-W in rrsync.

@@ -154,10 +154,8 @@ if ($mount) {
     foreach $filesystem (@FILESYSTEMS) {
 	if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 	    print "Mounting $device{$filesystem} on /altroot$filesystem\n";
-	    system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem") if (!$DEBUG);
-	    if ($!) {
-		die "Aborting due to error mounting $device{$filesystem} on /altroot$filesystem. $!\n";
-	    }
+	    system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem") if (!$DEBUG)
+		or die "Aborting due to error mounting $device{$filesystem} on /altroot/$filesystem. $?\n";
 	}
     }
 }

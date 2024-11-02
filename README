@@ -1,9 +1,9 @@
-rsync-tools-20240730
+rsync-tools-20241101
   rsync-client.pl / rsync-server.pl: For rsyncing files between systems on
      a regular basis, where doas/sudo may be required, using a non-privileged
      _rsyncu user. Uses pledge/unveil on OpenBSD.
   rsync_wrapper.sh, validate_rsync.sh - for use in authorized_keys file for
-     restricting rsnapshot rsyncs.
+     restricting rsnapshot rsyncs. (deprecated for rrsync)
   rsync-altroot.pl -- tool for backing up to /altroot on usually-unmounted
      file systems on a local machine.
   rrsync -- open source tool for restricting rsync via authorized_keys

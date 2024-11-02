@@ -25,6 +25,7 @@
 # Modified 2024-09-01 by Jim Lippard to use pledge and unveil on OpenBSD.
 # Modified 2024-09-02 by Jim Lippard to avoid unveil errors from need for
 #   /bin/sh by passing arguments individually in system calls.
+# Modified 2024-11-01 by Jim Lippard to abort if any mount fails.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -154,6 +155,9 @@ if ($mount) {
 	if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 	    print "Mounting $device{$filesystem} on /altroot$filesystem\n";
 	    system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem") if (!$DEBUG);
+	    if ($!) {
+		die "Aborting due to error mounting $device{$filesystem} on /altroot$filesystem. $!\n";
+	    }
 	}
     }
 }

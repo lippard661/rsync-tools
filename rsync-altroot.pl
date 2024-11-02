@@ -155,7 +155,7 @@ if ($mount) {
 	if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 	    print "Mounting $device{$filesystem} on /altroot$filesystem\n";
 	    if (!$DEBUG) {
-		system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem")
+		(system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem") == 0)
 		    or die "Aborting due to error mounting $device{$filesystem} on /altroot/$filesystem. $?\n";
 	    }
 	}

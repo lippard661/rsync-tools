@@ -40,6 +40,7 @@
 # Modified 30 July 2024 by Jim Lippard to add -no-lock and locking, and
 #    reuse additional checks from this patch: https://attachments.samba.org/attachment.cgi?id=14662
 # Modified 8 October 2024 by Jim Lippard to change no-w to no-W.
+# Modified 14 January 2025 by Jim Lippard to allow "true" as command like python version.
 
 use strict;
 
@@ -122,6 +123,7 @@ die "$0: -ro and -wo are mutually exclusive\n" if ($ro && $wo);
 
 my $command = $ENV{SSH_ORIGINAL_COMMAND};
 die "$0: Not invoked via sshd\n$Usage"	unless defined $command;
+exit(0) if ($command eq 'true'); # Allow checking connectivity with "ssh <host> true".
 die "$0: SSH_ORIGINAL_COMMAND='$command' is not rsync\n" unless $command =~ s/^rsync\s+//;
 our $am_sender = $command =~ /^--server\s+--sender\s/; # Restrictive on purpose!
 die "$0 -ro: sending to read-only server not allowed\n" if $ro && !$am_sender;

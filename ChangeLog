@@ -17,3 +17,5 @@
 8 October 2024: Added new s after dot for rsync-client.pl for rsync 3.3.0,
 	changed no-w to no-W in rrsync.
 1 November 2024: Make rsync-altroot.pl abort on mount error.
+15 January 2025: Add "true" command to rrsync for parity with rsync 3.4.0's
+	python version.

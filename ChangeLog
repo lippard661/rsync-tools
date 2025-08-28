@@ -19,3 +19,4 @@
 1 November 2024: Make rsync-altroot.pl abort on mount error.
 15 January 2025: Add "true" command to rrsync for parity with rsync 3.4.0's
 	python version.
+28 August 2025: Updated files/dirs for rsync-altroot.pl.

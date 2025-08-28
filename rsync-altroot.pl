@@ -26,6 +26,7 @@
 # Modified 2024-09-02 by Jim Lippard to avoid unveil errors from need for
 #   /bin/sh by passing arguments individually in system calls.
 # Modified 2024-11-01 by Jim Lippard to abort if any mount fails.
+# Modified 2025-08-28 by Jim Lippard to update / contents and add /share.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -54,38 +55,40 @@ my $UNMOUNT = '/sbin/umount';
 my $FSTAB = '/etc/fstab';
 
 my @FILESYSTEMS = (
-		   '',
-		   '/var',
-		   '/usr',
-		   '/usr/local',
-		   '/openbsd',
-		   '/home'
-		   );
+    '',
+    '/var',
+    '/usr',
+    '/usr/local',
+    '/home',
+    '/share',
+    );
 
 my (%device, %fstab, $dir);
 
 # '' = '/'
 my %device_map = (
-		  '', '/altroot',
-		  '/altroot', '/altroot',
-		  '/var', '/altroot/var',
-		  '/usr', '/altroot/usr',
-		  '/usr/local', '/altroot/usr/local',
-		  '/openbsd', '/altroot/openbsd',
-		  '/home', '/altroot/home'
+    '', '/altroot',
+    '/altroot', '/altroot',
+    '/var', '/altroot/var',
+    '/usr', '/altroot/usr',
+    '/usr/local', '/altroot/usr/local',
+    '/home', '/altroot/home',
+    '/share', '/altroot/share'
+    
 		  );
 
 my @ROOT_DIRS = (
-		 '/bin',
-		 '/boot',
-		 '/bsd',
-		 '/bsd.old',
-		 '/etc',
-		 '/root',
-		 '/sbin',
-		 '/stand',
-		 '/sys'
-		 );
+    '/bin',
+    '/boot',
+    '/bsd',
+    '/bsd.rd',
+    '/etc',
+    '/obsd',
+    '/root',
+    '/sbin',
+    '/stand',
+    '/sys'
+    );
 
 my $ALTROOT = '/altroot';
 

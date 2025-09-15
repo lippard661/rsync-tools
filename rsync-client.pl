@@ -54,6 +54,7 @@
 #    in client unveiling of paths and locking of unveil.
 # Modified 2024-08-29 by Jim Lippard for error checking on all pledge calls.
 # Modified 2024-10-08 by Jim Lippard to support new rsync 3.3.0 "s" option.
+# Modified 2025-09-15 by Jim Lippard to support Linux rsync path.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -199,6 +200,7 @@ my $LOG_FILE = "$RSYNC_USER_HOME/rsync.out";
 
 my $DOAS = '/usr/bin/doas';
 my $RSYNC = '/usr/local/bin/rsync';
+$RSYNC = '/usr/bin/rsync' if ($^O eq 'linux');
 my $SUDO = '/usr/bin/sudo';
 my $SSH = '/usr/bin/ssh';
 my $SHELL = '/bin/sh';

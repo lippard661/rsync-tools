@@ -20,3 +20,4 @@
 15 January 2025: Add "true" command to rrsync for parity with rsync 3.4.0's
 	python version.
 28 August 2025: Updated files/dirs for rsync-altroot.pl.
+15 September 2025: rsync-client.pl, rrsync: support Linux rsync path.

@@ -27,6 +27,7 @@
 #   /bin/sh by passing arguments individually in system calls.
 # Modified 2024-11-01 by Jim Lippard to abort if any mount fails.
 # Modified 2025-08-28 by Jim Lippard to update / contents and add /share.
+# Modified 2025-09-15 by Jim Lippard to support Linux rsync path.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -50,6 +51,7 @@ use if $^O eq "openbsd", "OpenBSD::Unveil";
 
 my $MOUNT = '/sbin/mount';
 my $RSYNC = '/usr/local/bin/rsync';
+$RSYNC = '/usr/bin/rsync' if ($^O eq 'linux');
 my $UNMOUNT = '/sbin/umount';
 
 my $FSTAB = '/etc/fstab';

@@ -40,7 +40,11 @@
 # Modified 30 July 2024 by Jim Lippard to add -no-lock and locking, and
 #    reuse additional checks from this patch: https://attachments.samba.org/attachment.cgi?id=14662
 # Modified 8 October 2024 by Jim Lippard to change no-w to no-W.
-# Modified 14 January 2025 by Jim Lippard to allow "true" as command like python version.
+# Modified 14 January 2025 by Jim Lippard to allow "true" as command like
+#    python version.
+# Modified 14 September 2025 by Jim Lippard to define RSYNC path based
+#    on operating system (Darwin and linux use /usr/bin; OpenBSD uses
+#    /usr/local/bin). doas location is same for Linux apt and OpenBSD.
 
 use strict;
 
@@ -50,11 +54,16 @@ use File::Glob ':glob';
 use Fcntl ':flock';
 
 use if $^O eq "openbsd", "OpenBSD::Pledge";
-use if $^O eq "openbsd", "OpenBSD::Unveil";   
+use if $^O eq "openbsd", "OpenBSD::Unveil";
+
+sub get_rsync_path {
+    return ('/usr/local/bin/rsync') if ($^O eq 'openbsd');
+    return ('/usr/bin/rsync'); # Darwin/macOS, Linux
+}
 
 # You may configure these values to your liking.  See also the section
 # of options if you want to disable any options that rsync accepts.
-use constant RSYNC => '/usr/local/bin/rsync';
+use constant RSYNC => get_rsync_path();
 use constant DOAS => '/usr/bin/doas';
 use constant LOGFILE => '/home/_rsyncu/rrsync.log';
 use constant LOCKFILE => '/home/_rsyncu/.rrsync.lock';

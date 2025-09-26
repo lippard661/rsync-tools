@@ -21,3 +21,5 @@
 	python version.
 28 August 2025: Updated files/dirs for rsync-altroot.pl.
 15 September 2025: rsync-client.pl, rrsync: support Linux rsync path.
+26 September 2025: add error handling on log open in rsync-client.pl, remove
+	deprecated rsync tools.

@@ -1,4 +1,4 @@
-#!/usr/bin/perl -w
+#!/usr/bin/perl
 
 # Written 2003-01-14 by Jim Lippard.
 # Modified 2003-02-13 by Jim Lippard to add "both" function.
@@ -55,6 +55,8 @@
 # Modified 2024-08-29 by Jim Lippard for error checking on all pledge calls.
 # Modified 2024-10-08 by Jim Lippard to support new rsync 3.3.0 "s" option.
 # Modified 2025-09-15 by Jim Lippard to support Linux rsync path.
+# Modified 2025-09-25 by Jim Lippard to abort and complain if can't open
+#    log file for writing. Removed DSA key option.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -120,6 +122,10 @@
 #    entry in the config file.  Make sure the ownership and permissions on the config file
 #    are restricted to read-only for the rsync user.
 #
+# It can be helpful to use separate SSH keys for push and pull operations,
+# splitting them out in the authorized_keys file accordingly and specifying
+# the identity to use in the ssh-identity field of the config file.
+#
 # NOTE: As of sudo version 1.6.9p4 (the version included with OpenBSD 4.2), sudo filters
 # environment variables.  If you do any rsyncs with this script that use sudo, you
 # will need to permit the RSYNC_RSH environment variable to be passed by adding
@@ -176,6 +182,7 @@
 ### Required packages.
 
 use strict;
+use warnings;
 use File::Basename;
 use Sys::Hostname;
 use if $^O eq "openbsd", "OpenBSD::Pledge";
@@ -190,10 +197,9 @@ my $RSYNC_USER = '_rsyncu';
 my $RSYNC_USER_HOME = "/home/$RSYNC_USER";
 my $RSYNC_USER_SSHDIR = "$RSYNC_USER_HOME/.ssh";
 my $RSYNC_IDENTITY = "$RSYNC_USER_SSHDIR/id_dsa";
-my $RSYNC_ED25519_IDENTITY = "$RSYNC_USER_SSHDIR/id_ed25519";
+my $RSYNC_ED25519_IDENTITY = "$RSYNC_USER_SSHDIR/id_ed25519"; # preferred
 my $RSYNC_ECDSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_ecdsa";
-my $RSYNC_DSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_dsa";
-my $RSYNC_RSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_rsa";
+my $RSYNC_RSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_rsa"; # deprecated with SHA-1
 
 my $CONFIG_FILE = '/etc/rsync/rsync.conf';
 my $LOG_FILE = "$RSYNC_USER_HOME/rsync.out";
@@ -223,7 +229,18 @@ elsif ($0 =~ /rsync-server.pl$/) {
     $CLIENT = 0;
 }
 
-my @POSSIBLE_SERVER_OPTIONS = ('-vlogDtprz', '-vlogDtpRz', '-vlogDtprze.', '-vlogDtprze.i', '-vlogDtprze.f', '-vlogDtprze.if', '-vlogDtprze.iLf', '-vlogDtprze.iL', '-vlogDtprze.iLfx', '-vlogDtprze.iLfxC', '-vlogDtprze.iLfxCIvu', '-vlogDtprze.iLsfxCIvu');
+my @POSSIBLE_SERVER_OPTIONS = ('-vlogDtprz',
+			       '-vlogDtpRz',
+			       '-vlogDtprze.',
+			       '-vlogDtprze.i',
+			       '-vlogDtprze.f',
+			       '-vlogDtprze.if',
+			       '-vlogDtprze.iLf',
+			       '-vlogDtprze.iL',
+			       '-vlogDtprze.iLfx',
+			       '-vlogDtprze.iLfxC',
+			       '-vlogDtprze.iLfxCIvu',
+			       '-vlogDtprze.iLsfxCIvu');
 # The "R" option is for --relative; the e.[i] options only appear after rsync 3.0.; .f only in rsync 3.0.7+
 # I probably haven't made this work for 3.0 uses of --relative.
 # The "L" option appeared with rsync 3.0.8.
@@ -510,8 +527,8 @@ sub parse_config {
 	    else {
 		$time = time();
 		$time = localtime ($time);
-
-		open (LOG, '>>', $LOG_FILE);
+		
+		open (LOG, '>>', $LOG_FILE) || die "Cannot open log file $LOG_FILE. $!\n";
 
 		print LOG "$time $0 hostname=$HOSTNAME, other_host=$other_host, CLIENT=$CLIENT, push=$push, both=$both, No matching entry in config file.\n";
 		close (LOG);
@@ -536,9 +553,6 @@ sub exec_client {
     }
     elsif (-e $RSYNC_ECDSA_IDENTITY) {
 	$RSYNC_IDENTITY = $RSYNC_ECDSA_IDENTITY;
-    }
-    elsif (-e $RSYNC_DSA_IDENTITY) {
-	$RSYNC_IDENTITY = $RSYNC_DSA_IDENTITY;
     }
     elsif (-e $RSYNC_RSA_IDENTITY) {
 	$RSYNC_IDENTITY = $RSYNC_RSA_IDENTITY;
@@ -721,7 +735,7 @@ sub exec_server {
     $time = time();
     $time = localtime ($time);
 
-    open (LOG, '>>', $LOG_FILE);
+    open (LOG, '>>', $LOG_FILE) || die "Cannot open log file $LOG_FILE. $!\n";
 
     print LOG "$time $0 $ENV{'SSH_CONNECTION'} ***New command issued: $command\n";
 

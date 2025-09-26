@@ -6,5 +6,3 @@ rrsync				Wrapper with more options
 rsync-altroot.pl		Tool to rsync filesystems to /altroot
 rsync-client.pl			Script for rsyncing between systems
 rsync.conf			Sample config file for rsync-client.pl
-rsync_wrapper.sh		Wrapper for use with rsnapshot (deprecated)
-validate_rsync.sh		Wrapper for use with rsnapshot (deprecated)

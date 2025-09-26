@@ -1,5 +1,7 @@
 BUGS:
 
+(Fixed 25 Sep 2025): rsync-server.pl should abort if log file can't be opened.
+
 rsync-client/rsync-server:
 There is currently no way to distinguish on the server (receiving)
 side between different source dirs that share the same destination

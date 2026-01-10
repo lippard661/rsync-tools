@@ -24,3 +24,5 @@
 26 September 2025: add error handling on log open in rsync-client.pl, remove
 	deprecated rsync tools.
 9 December 2025: add -no-overwrite to rrsync.
+10 January 2026: rsync-client.pl: minor changes, less use of shell;
+	rsync-altroot.pl: minor change, remove unnecessary quotes.

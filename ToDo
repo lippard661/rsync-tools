@@ -20,4 +20,9 @@ dirlist function could stand to do some validation.
 
 FEATURES TO ADD:
 
+Do own glob expansion to completely avoid shell on system calls to rsync.
+
+(Done 10 Jan 2026) Avoid use of shell on system calls for setup/cleanup and everything
+else unless needed.
+
 README file could use some expansion.

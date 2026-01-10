@@ -28,6 +28,7 @@
 # Modified 2024-11-01 by Jim Lippard to abort if any mount fails.
 # Modified 2025-08-28 by Jim Lippard to update / contents and add /share.
 # Modified 2025-09-15 by Jim Lippard to support Linux rsync path.
+# Modified 2026-01-10 by Jim Lippard to remove unnecessary quotes.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -160,7 +161,7 @@ if ($mount) {
 	if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 	    print "Mounting $device{$filesystem} on /altroot$filesystem\n";
 	    if (!$DEBUG) {
-		(system ("$MOUNT", "$device{$filesystem}", "/altroot$filesystem") == 0)
+		(system ($MOUNT, "$device{$filesystem}", "/altroot$filesystem") == 0)
 		    or die "Aborting due to error mounting $device{$filesystem} on /altroot/$filesystem. $?\n";
 	    }
 	}
@@ -174,10 +175,10 @@ if ($rsync) {
 	if (-d $directory || $directory eq '') {
 	    print "rsync on $directory to $rsync_target\n";
 	    if ($directory eq '/etc') {
-		system ("$RSYNC", '-avz', '--exclude', "'*scache.*'", '--delete', "$directory", "$rsync_target") if (!$DEBUG);
+		system ($RSYNC, '-avz', '--exclude', "'*scache.*'", '--delete', $directory, $rsync_target) if (!$DEBUG);
 	    }
 	    else {
-		system ("$RSYNC", '-avz', '--delete', "$directory", "$rsync_target") if (!$DEBUG);
+		system ($RSYNC, '-avz', '--delete', $directory, $rsync_target) if (!$DEBUG);
 	    }
 	}
     }
@@ -187,7 +188,7 @@ if ($rsync) {
 	if (defined ($device{$directory}) && (-d $directory || $directory eq '')) {
 	    if ($directory ne '' && $directory ne '/usr/local') {
 		print "rsync from $directory to $rsync_target\n";
-		system ("$RSYNC", '-avz', '--delete', "$directory", "$rsync_target") if (!$DEBUG);
+		system ($RSYNC, '-avz', '--delete', $directory, $rsync_target) if (!$DEBUG);
 	    }
 	}
     }

@@ -57,6 +57,9 @@
 # Modified 2025-09-15 by Jim Lippard to support Linux rsync path.
 # Modified 2025-09-25 by Jim Lippard to abort and complain if can't open
 #    log file for writing. Removed DSA key option.
+# Modified 2026-01-04 by Jim Lippard to remove @ from subroutine calls.
+# Modified 2026-01-10 by Jim Lippard to break up setup/cleanup commands to
+#    avoid shell.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -303,13 +306,13 @@ if ($CLIENT) {
     # This could be a push or a pull, but if it's "both" it's a pull.
     # (Reversed the order on both in order to allow pledge to add
     # further restrictions after the pull.)
-    &parse_config;
-    &exec_client;
+    parse_config();
+    exec_client();
     # And so, with both, we now need to do a push.
     if ($both) {
 	$push = 1;
-	&parse_config;
-	&exec_client;
+	parse_config();
+	exec_client();
     }
 }
 # server gets invoked twice if "both" is used, need to do what the
@@ -322,8 +325,8 @@ else {
     else {
 	$push = 1;
     }
-    &parse_config;
-    &exec_server;
+    parse_config();
+    exec_server();
 }
 
 ### Subroutines.
@@ -375,57 +378,57 @@ sub parse_config {
 	    }
 	}
 	elsif (/^\s*destination:\s+(.*)$/) {
-	    &check_arg ('destination', $1, $have_destination);
+	    check_arg ('destination', $1, $have_destination);
 	    $destination = $1;
 	    $have_destination = 1;
 	}
 	elsif (/^\s*source-dirlist:\s+(.*)$/) {
-	    &check_arg ('source-dirlist', $1, $have_source_dirlist);
+	    check_arg ('source-dirlist', $1, $have_source_dirlist);
 	    @source_dirlist = &dirlist ($1, $VALIDATE_DIRLIST);
 	    $have_source_dirlist = 1;
 	}
 	elsif (/^\s*destination-dirlist:\s+(.*)$/) {
-	    &check_arg ('destination-dirlist', $1, $have_destination_dirlist);
+	    check_arg ('destination-dirlist', $1, $have_destination_dirlist);
 	    @destination_dirlist = &dirlist ($1, $VALIDATE_DIRLIST);
 	    $have_destination_dirlist = 1;
 	}
 	elsif (/^\s*rsync-options:\s+(.*)$/) {
-	    &check_arg ('rsync-options', $1, $have_rsync_options);
+	    check_arg ('rsync-options', $1, $have_rsync_options);
 	    @rsync_options = &dirlist ($1);
 	    $have_rsync_options = 1;
 	}
 	elsif (/^\s*ssh-identity:\s+(.*)$/) {
-	    &check_arg ('ssh-identity', $1, $have_ssh_identity);
+	    check_arg ('ssh-identity', $1, $have_ssh_identity);
 	    $ssh_identity = $1;
 	    $have_ssh_identity = 1;
 	}
 	elsif (/^\s*source-setup:\s+(.*)$/) {
-	    &check_arg ('source-setup', $1, $have_source_setup);
+	    check_arg ('source-setup', $1, $have_source_setup);
 	    @source_setup = &dirlist ($1);
 	    $have_source_setup = 1;
 	}
 	elsif (/^\s*source-cleanup:\s+(.*)$/) {
-	    &check_arg ('source-cleanup', $1, $have_source_cleanup);
+	    check_arg ('source-cleanup', $1, $have_source_cleanup);
 	    @source_cleanup = &dirlist ($1);
 	    $have_source_cleanup = 1;
 	}
 	elsif (/^\s*destination-setup:\s+(.*)$/) {
-	    &check_arg ('destination-setup', $1, $have_dest_setup);
+	    check_arg ('destination-setup', $1, $have_dest_setup);
 	    @dest_setup = &dirlist ($1);
 	    $have_dest_setup = 1;
 	}
 	elsif (/^\s*destination-cleanup:\s+(.*)$/) {
-	    &check_arg ('destination-cleanup', $1, $have_dest_cleanup);
+	    check_arg ('destination-cleanup', $1, $have_dest_cleanup);
 	    @dest_cleanup = &dirlist ($1);
 	    $have_dest_cleanup = 1;
 	}
 	elsif (/^\s*source-sudo:\s+(.*)$/) {
-	    &check_arg ('source-sudo', $1, $have_source_sudo);
+	    check_arg ('source-sudo', $1, $have_source_sudo);
 	    @source_sudo = &yes_or_no_list ('source-sudo', $1);
 	    $have_source_sudo = 1;
 	}
 	elsif (/^\s*destination-sudo:\s+(.*)$/) {
-	    &check_arg ('destination-sudo', $1, $have_destination_sudo);
+	    check_arg ('destination-sudo', $1, $have_destination_sudo);
 	    @destination_sudo = &yes_or_no_list ('destination-sudo', $1);
 	    $have_destination_sudo = 1;
 	}
@@ -642,7 +645,7 @@ sub exec_client {
     for ($idx = 0; $idx <= $#source_dirlist; $idx++) {
 	if ($setup_command[$idx]) {
 	    print "setup: $setup_command[$idx]\n" if ($DEBUG);
-	    system ("$setup_command[$idx]");
+	    exec_command ($setup_command[$idx]);
 	}
 	if (($push && $source_sudo[$idx]) || (!$push && $destination_sudo[$idx])) {
 	    if ($USE_SUDO) {
@@ -657,16 +660,26 @@ sub exec_client {
 	}
 	if ($rsync_options[$idx]) {
 	    print "$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    system ("$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
+	    if ($source_dirlist[$idx] =~ /\*/ || $destination_dirlist[$idx] =~ /\*/) {
+		system ("$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
+	    }
+	    else {
+		exec_command ("$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
+	    }
 	}
 	else {
 	    print "$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    system ("$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
+	    if ($source_dirlist[$idx] =~ /\*/ || $destination_dirlist[$idx] =~ /\*/) {
+		system ("$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
+	    }
+	    else {
+		exec_command ("$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
+	    }
 	}
 
         if ($cleanup_command[$idx]) {
             print "cleanup: $cleanup_command[$idx]\n" if ($DEBUG);
-            system ("$cleanup_command[$idx]");
+	    exec_command ($cleanup_command[$idx]);
         }
     }
 }
@@ -753,13 +766,10 @@ sub exec_server {
 	    }
 	    if ($path eq $allowed_paths[$idx]) {
 		$allowed_this_path = 1;
-		if (&server_options_match ($options, $rsync_options[$idx])) {
-#		if (($rsync_options[$idx] && (&server_options_match ($options, $rsync_options[$idx]))) ||
-#		    ($options eq "")) {
-
+		if (server_options_match ($options, $rsync_options[$idx])) {
 		    if ($setup_command[$idx]) {
 			print LOG "$time Setup command: $setup_command[$idx]\n";
-			system ("$setup_command[$idx]");
+			exec_command ($setup_command[$idx]);
 		    }
 
 		    $time = time();
@@ -767,25 +777,40 @@ sub exec_server {
 		    if ($need_sudo) {
 			if ($USE_SUDO) {
 			    print LOG "$time Command issued: $SUDO $RSYNC $allowed_prefix $options . $path\n";
-			    system ("$SUDO $RSYNC $allowed_prefix $options . $path");
+			    if ($path =~ /\*/) {
+				system ("$SUDO $RSYNC $allowed_prefix $options . $path");
+			    }
+			    else {
+				exec_command ("$SUDO $RSYNC $allowed_prefix $options . $path");
+			    }
 			    print LOG "$time Command executed: $SUDO $RSYNC $allowed_prefix $options . $path\n";
 			}
 			else {
 			    print LOG "$time Command issued: $DOAS $RSYNC $allowed_prefix $options . $path\n";
-			    system ("$DOAS $RSYNC $allowed_prefix $options . $path");
+			    if ($path =~ /\*/) {
+				system ("$DOAS $RSYNC $allowed_prefix $options . $path");
+			    }
+			    else {
+				exec_command ("$DOAS $RSYNC $allowed_prefix $options . $path");
+			    }
 			    print LOG "$time Command executed: $DOAS $RSYNC $allowed_prefix $options . $path\n";
 			}
 
 		    }
 		    else {
 			print LOG "$time Command issued: $RSYNC $allowed_prefix $options . $path\n";
-			system ("$RSYNC $allowed_prefix $options . $path");
+			if ($path =~ /\*/) {
+			    system ("$RSYNC $allowed_prefix $options . $path");
+			}
+			else {
+			    exec_command ("$RSYNC $allowed_prefix $options . $path");
+			}
 			print LOG "$time Command executed: $RSYNC $allowed_prefix $options . $path\n";
 		    }
 
 		    if ($cleanup_command[$idx]) {
 			print LOG "$time Cleanup command: $cleanup_command[$idx]\n";
-			system ("$cleanup_command[$idx]");
+			exec_command ($cleanup_command[$idx]);
 		    }
 
 		}
@@ -827,6 +852,7 @@ sub check_arg {
 
 # Subroutine to return array of directories from a list.
 # Also used by command lists, so only validate when requested.
+# "" becomes 0.
 sub dirlist {
     my ($arg, $validate) = @_;
     my (@dirlist, $item);
@@ -836,7 +862,7 @@ sub dirlist {
 	if ($item eq "\"\"") {
 	    $item = 0;
 	}
-	elsif ($validate && !&valid_dir ($item)) {
+	elsif ($validate && !valid_dir ($item)) {
 	    die "Configuration file has invalid dir \"$item\" in dirlist \"$arg\".\n";
 	}
     }
@@ -914,7 +940,7 @@ sub yes_or_no_list {
 
     @in_list = split (/,\s+/, $arg);
     foreach $in (@in_list) {
-	push (@yn_list, &yes_or_no ($entry, $in));
+	push (@yn_list, yes_or_no ($entry, $in));
     }
 
     return (@yn_list);
@@ -929,8 +955,8 @@ sub server_options_match {
     my ($supplied_options, $avail_options) = @_;
     my (@split_supplied_options, @split_avail_options, $option);
 
-    @split_supplied_options = &optionlist ($supplied_options);
-#    @split_avail_options = &optionlist ($avail_options);
+    @split_supplied_options = optionlist ($supplied_options);
+#    @split_avail_options = optionlist ($avail_options);
 
 #    if (grep (/^--relative/, @split_avail_options)) {
 #	push (@split_avail_options, $RELATIVE_SERVER_OPTIONS);
@@ -951,4 +977,13 @@ sub server_options_match {
     }
 
     return 1;
+}
+
+# Subroutine to execute a command without invoking shell.
+sub exec_command {
+    my ($command) = @_;
+    my @command;
+
+    @command = split (/\s+/, $command);
+    system (@command);
 }

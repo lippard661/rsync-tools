@@ -3,7 +3,6 @@ Scripts for assisting with rsync via unprivileged user.
 
 Includes an updated perl version of rrsync that has feature parity with the newer python version included with rsync distributions, plus uses OpenBSD's pledge/unveil when available.
 
-This is the release of 9 December 2025 from https://www.discord.org/lippard/software/
+This is the release of 10 January 2026 from https://www.discord.org/lippard/software/
 
-rsync-tools-20251209.tgz is a Legion of Dynamic Discord signify-signed OpenBSD package. Signify public key is https://www.discord.org/lippard/software/discord.org-2025-pkg.pub
-Future releases in 2026 will be signed with https://www.discord.org/lippard/software/discord.org-2026-pkg.pub
+rsync-tools-20260110.tgz is a Legion of Dynamic Discord signify-signed OpenBSD package. Signify public key is https://www.discord.org/lippard/software/discord.org-2026-pkg.pub

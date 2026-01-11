@@ -60,6 +60,8 @@
 # Modified 2026-01-04 by Jim Lippard to remove @ from subroutine calls.
 # Modified 2026-01-10 by Jim Lippard to break up setup/cleanup commands to
 #    avoid shell.
+# Modified 2026-01-11 by Jim Lippard to allow setup/cleanup commands to
+#    contain multiple commands separated by semicolons.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -214,6 +216,8 @@ my $SUDO = '/usr/bin/sudo';
 my $SSH = '/usr/bin/ssh';
 my $SHELL = '/bin/sh';
 my $ZONEINFO_DIR = '/usr/share/zoneinfo';
+
+my $ALLOW_MULTIPLE = 1;
 
 my $HOSTNAME = hostname();
 my $DOMAIN = '';
@@ -645,7 +649,7 @@ sub exec_client {
     for ($idx = 0; $idx <= $#source_dirlist; $idx++) {
 	if ($setup_command[$idx]) {
 	    print "setup: $setup_command[$idx]\n" if ($DEBUG);
-	    exec_command ($setup_command[$idx]);
+	    exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
 	}
 	if (($push && $source_sudo[$idx]) || (!$push && $destination_sudo[$idx])) {
 	    if ($USE_SUDO) {
@@ -679,7 +683,7 @@ sub exec_client {
 
         if ($cleanup_command[$idx]) {
             print "cleanup: $cleanup_command[$idx]\n" if ($DEBUG);
-	    exec_command ($cleanup_command[$idx]);
+	    exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
         }
     }
 }
@@ -769,7 +773,7 @@ sub exec_server {
 		if (server_options_match ($options, $rsync_options[$idx])) {
 		    if ($setup_command[$idx]) {
 			print LOG "$time Setup command: $setup_command[$idx]\n";
-			exec_command ($setup_command[$idx]);
+			exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
 		    }
 
 		    $time = time();
@@ -810,7 +814,7 @@ sub exec_server {
 
 		    if ($cleanup_command[$idx]) {
 			print LOG "$time Cleanup command: $cleanup_command[$idx]\n";
-			exec_command ($cleanup_command[$idx]);
+			exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
 		    }
 
 		}
@@ -981,9 +985,18 @@ sub server_options_match {
 
 # Subroutine to execute a command without invoking shell.
 sub exec_command {
-    my ($command) = @_;
-    my @command;
+    my ($command, $allow_multiple) = @_;
+    my (@commands, @command);
 
-    @command = split (/\s+/, $command);
-    system (@command);
+    if ($allow_multiple && $command =~ /;/) {
+	@commands = split (/\s*;\s*/, $command);
+    }
+    else {
+	push (@commands, $command);
+    }
+
+    foreach $command (@commands) {
+	@command = split (/\s+/, $command);
+	system (@command);
+    }
 }

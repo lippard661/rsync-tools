@@ -26,3 +26,4 @@
 9 December 2025: add -no-overwrite to rrsync.
 10 January 2026: rsync-client.pl: minor changes, less use of shell;
 	rsync-altroot.pl: minor change, remove unnecessary quotes.
+11 January 2026: rsync-client.pl: allow multiple setup/cleanup commands.

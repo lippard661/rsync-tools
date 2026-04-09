@@ -388,7 +388,7 @@ if ($write_log) {
   $host = gethostbyaddr(inet_aton($host),AF_INET) if ($host =~ /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/);
   $month += 1;
   $year += 1900;
-  printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
+  printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
   close LOG;
 }
 

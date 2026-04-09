@@ -47,8 +47,10 @@
 #    /usr/local/bin). doas location is same for Linux apt and OpenBSD.
 # Modified 9 December 2025 by Jim Lippard to add -no-overwrite and update
 #    options settings.
+# Modified 8 April 2026 by Jim Lippard to add "use warnings".
 
 use strict;
+use warnings;
 
 use Socket;
 use Cwd 'abs_path';

@@ -62,6 +62,11 @@
 #    avoid shell.
 # Modified 2026-01-11 by Jim Lippard to allow setup/cleanup commands to
 #    contain multiple commands separated by semicolons.
+# Modified 2026-02-06 by Jim Lippard to require absolute paths for dirs.
+# Modified 2026-04-08 by Jim Lippard to fix cleanup command regex typo,
+#    error in OS check for pledge/unveil for exec_server. Use File::Glob
+#    instead of using shell. Simplify rsync execution logic for client and
+#    server.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -189,6 +194,7 @@
 use strict;
 use warnings;
 use File::Basename;
+use File::Glob ':glob';
 use Sys::Hostname;
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";
@@ -214,7 +220,6 @@ my $RSYNC = '/usr/local/bin/rsync';
 $RSYNC = '/usr/bin/rsync' if ($^O eq 'linux');
 my $SUDO = '/usr/bin/sudo';
 my $SSH = '/usr/bin/ssh';
-my $SHELL = '/bin/sh';
 my $ZONEINFO_DIR = '/usr/share/zoneinfo';
 
 my $ALLOW_MULTIPLE = 1;
@@ -266,12 +271,13 @@ my ($push, $both, $other_host, $source, $destination,
     @source_sudo, @destination_sudo,
     @source_setup, @source_cleanup, @dest_setup, @dest_cleanup,
     @setup_command, @cleanup_command, $idx);
+my (@this_command);
 
 # Client variables.
-my ($source_info, $destination_info);
+my ($source_info, $destination_info, @rsync_command);
 
 # Server variables.
-my ($allowed_prefix, @allowed_paths, $options, $need_sudo, $command, $this_command, $time,
+my (@allowed_prefix, @allowed_paths, $options, $need_sudo, $command, $time,
     $path, $allowed_path, $allowed_this_path);
 
 ### Main program.
@@ -572,7 +578,7 @@ sub exec_client {
 	$ENV{'RSYNC_RSH'} = "$SSH -vv -i $RSYNC_IDENTITY";
     }
 
-    $command = "$RSYNC -avz";
+    @rsync_command = ($RSYNC, '-avz');
 
     if ($push) {
 	$source_info = "";
@@ -591,27 +597,24 @@ sub exec_client {
 
     # Use pledge and unveil to restrict access for client. stdio already included.
     if ($^O eq 'openbsd') {
-	my ($path, $command, $need_shell);
-
-	$need_shell = 0;
+	my ($path, $command);
 	
 	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'proc') || die "Cannot pledge promises. $!\n";
 
 	# Unveil dir paths.
 	foreach $path (@allowed_paths) {
-	    $need_shell = 1 if ($path =~ /\*/);
-	    $path = dirname ($path) if ($path !~ /\/$/);
+	    my $unveil_path = dirname ($path) if ($path !~ /\/$/);
+	    $unveil_path //= $path;
 	    if ($push) {
-		unveil ($path, 'r');
+		unveil ($unveil_path, 'r');
 
 	    }
 	    else {
-		unveil ($path, 'rwc');	
+		unveil ($unveil_path, 'rwc');	
 	    }
 	}
 
 	# Unveil commands.
-	unveil ($SHELL, 'rx') if ($need_shell);
 	unveil ($RSYNC, 'rx');
 	unveil ($SSH, 'rx');
 	unveil ($RSYNC_USER_SSHDIR, 'r');
@@ -621,16 +624,23 @@ sub exec_client {
 
 	foreach $command (@setup_command) {
 	    if ($command) {
-		$command =~ s/^(.*)\s+.*$/$1/;
-		unveil ($command, 'rx');
+		foreach my $cmd (split(/\s*;\s*/, $command)) {
+		    my $cmd_path = $cmd;
+		    $cmd_path =~ s/^(\S+).*$/$1/;
+		    unveil ($cmd_path, 'rx');
+		}
 	    }
 	}
 	foreach $command (@cleanup_command) {
 	    if ($command) {
-		$command =~ s/^(.*)\s+.*$/$1/;
-		unveil ($command, 'rx');
+		foreach my $cmd (split(/\s*;\s*/, $command)) {
+		    my $cmd_path = $cmd;
+		    $cmd_path =~ s/^(\S+).*$/$1/;
+		    unveil ($cmd_path, 'rx');
+		}
 	    }
 	}
+	
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
 	    unveil ($SUDO, 'rx');
@@ -653,32 +663,28 @@ sub exec_client {
 	}
 	if (($push && $source_sudo[$idx]) || (!$push && $destination_sudo[$idx])) {
 	    if ($USE_SUDO) {
-		$this_command = "$SUDO $command";
+		@this_command = ($SUDO, @rsync_command);
 	    }
 	    else {
-		$this_command = "$DOAS $command";
+		@this_command = ($DOAS, @rsync_command);
 	    }
 	}
 	else {
-	    $this_command = $command;
+	    @this_command = (@rsync_command);
 	}
+
+	# Do any glob expansion required on client side, don't rely on shell.
+	my @sources = ($source_info eq '' && $source_dirlist[$idx] =~ /\*/)
+	    ? bsd_glob("$source_info$source_dirlist[$idx]", GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE)
+	    : ("$source_info$source_dirlist[$idx]");
+	
 	if ($rsync_options[$idx]) {
-	    print "$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    if ($source_dirlist[$idx] =~ /\*/ || $destination_dirlist[$idx] =~ /\*/) {
-		system ("$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
-	    }
-	    else {
-		exec_command ("$this_command $rsync_options[$idx] $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
-	    }
+	    print "@this_command $rsync_options[$idx] @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
+	    system (@this_command, split (/\s+/, $rsync_options[$idx]), @sources, "$destination_info$destination_dirlist[$idx]");
 	}
 	else {
-	    print "$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    if ($source_dirlist[$idx] =~ /\*/ || $destination_dirlist[$idx] =~ /\*/) {
-		system ("$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
-	    }
-	    else {
-		exec_command ("$this_command $source_info$source_dirlist[$idx] $destination_info$destination_dirlist[$idx]");
-	    }
+	    print "@this_command @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
+	    system (@this_command, @sources, "$destination_info$destination_dirlist[$idx]");
 	}
 
         if ($cleanup_command[$idx]) {
@@ -692,50 +698,60 @@ sub exec_client {
 sub exec_server {
     # Push.
     if ($push) {
-	$allowed_prefix = '--server';
 	@allowed_paths = @destination_dirlist;
 	@setup_command = @dest_setup;
 	@cleanup_command = @dest_cleanup;
     }
     # Pull.
     else {
-	$allowed_prefix = '--server --sender';
 	@allowed_paths = @source_dirlist;
 	@setup_command = @source_setup;
 	@cleanup_command = @source_cleanup;
     }
 
+    my $allowed_prefix_re = ($push) ? '--server' : '--server --sender';
+    @allowed_prefix = ($push) ? ('--server') : ('--server', '--sender');
+
     # Use pledge and unveil to restrict access for server. stdio already included.
-    if ($^O eq 'OpenBSD') {
-	my ($path, $command, $need_shell);
+    if ($^O eq 'openbsd') {
+	my ($path, $command);
 
-	$need_shell = 0;
-
-	pledge ('rpath' , 'wpath', 'cpath', 'exec', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";;
+	pledge ('rpath' , 'wpath', 'cpath', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";;
 
 	unveil ($RSYNC, 'rx');
 	unveil ($CONFIG_FILE, 'r');
-	unveil ($LOG_FILE, 'rw');
+	unveil ($LOG_FILE, 'rwc');
+	unveil ($ZONEINFO_DIR, 'r');
 	foreach $path (@allowed_paths) {
-	    $need_shell = 1 if ($path =~ /\*/);
-	    $path = dirname ($path) if ($path !~ /\/$/);
+	    my $unveil_path = dirname ($path) if ($path !~ /\/$/);
+	    $unveil_path //= $path;
 	    if ($push) {
-		unveil ($path, 'rwc');
+		unveil ($unveil_path, 'rwc');
 	    }
 	    else {
-		unveil ($path, 'r');
+		unveil ($unveil_path, 'r');
 	    }
 	}
-	unveil ($SHELL, 'rx') if ($need_shell);
 
-	foreach $command (@setup_command) {
-	    $command =~ s/^(.*)\s+.*$/$1/;
-	    unveil ($command, 'rx');
+		foreach $command (@setup_command) {
+	    if ($command) {
+		foreach my $cmd (split(/\s*;\s*/, $command)) {
+		    my $cmd_path = $cmd;
+		    $cmd_path =~ s/^(\S+).*$/$1/;
+		    unveil ($cmd_path, 'rx');
+		}
+	    }
 	}
 	foreach $command (@cleanup_command) {
-	    $command =~ s/^(.*)\s+,*$/$1/;
-	    unveil ($command, 'rx');
+	    if ($command) {
+		foreach my $cmd (split(/\s*;\s*/, $command)) {
+		    my $cmd_path = $cmd;
+		    $cmd_path =~ s/^(\S+).*$/$1/;
+		    unveil ($cmd_path, 'rx');
+		}
+	    }
 	}
+
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
 	    unveil ($SUDO, 'rx');
@@ -756,7 +772,7 @@ sub exec_server {
 
     print LOG "$time $0 $ENV{'SSH_CONNECTION'} ***New command issued: $command\n";
 
-    if ($command =~ /^rsync $allowed_prefix\s*([\s\w\.-]*)\s+\.\s+(.*)$/) {
+    if ($command =~ /^rsync $allowed_prefix_re\s*([\s\w\.-]*)\s+\.\s+(.*)$/) {
 	$options = $1;
 	$path = $2;
 
@@ -779,38 +795,19 @@ sub exec_server {
 		    $time = time();
 		    $time = localtime ($time);
 		    if ($need_sudo) {
-			if ($USE_SUDO) {
-			    print LOG "$time Command issued: $SUDO $RSYNC $allowed_prefix $options . $path\n";
-			    if ($path =~ /\*/) {
-				system ("$SUDO $RSYNC $allowed_prefix $options . $path");
-			    }
-			    else {
-				exec_command ("$SUDO $RSYNC $allowed_prefix $options . $path");
-			    }
-			    print LOG "$time Command executed: $SUDO $RSYNC $allowed_prefix $options . $path\n";
-			}
-			else {
-			    print LOG "$time Command issued: $DOAS $RSYNC $allowed_prefix $options . $path\n";
-			    if ($path =~ /\*/) {
-				system ("$DOAS $RSYNC $allowed_prefix $options . $path");
-			    }
-			    else {
-				exec_command ("$DOAS $RSYNC $allowed_prefix $options . $path");
-			    }
-			    print LOG "$time Command executed: $DOAS $RSYNC $allowed_prefix $options . $path\n";
-			}
-
+			@this_command = ($USE_SUDO ? $SUDO : $DOAS, $RSYNC);
 		    }
 		    else {
-			print LOG "$time Command issued: $RSYNC $allowed_prefix $options . $path\n";
-			if ($path =~ /\*/) {
-			    system ("$RSYNC $allowed_prefix $options . $path");
-			}
-			else {
-			    exec_command ("$RSYNC $allowed_prefix $options . $path");
-			}
-			print LOG "$time Command executed: $RSYNC $allowed_prefix $options . $path\n";
+			@this_command = ($RSYNC);
 		    }
+
+		    my @paths = ($path =~ /\*/)
+			? bsd_glob($path, GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE)
+			: ($path);
+		    
+		    print LOG "$time Command issued: @this_command @allowed_prefix $options . @paths\n";
+		    system (@this_command, @allowed_prefix, split (/\s+/, $options), '.', @paths);
+		    print LOG "$time Command executed: @this_command @allowed_prefix $options . @paths\n";
 
 		    if ($cleanup_command[$idx]) {
 			print LOG "$time Cleanup command: $cleanup_command[$idx]\n";
@@ -831,7 +828,7 @@ sub exec_server {
     }
     else { # Doesn't match regexp.
 	print LOG "$time Disallowed command: $command\n";
-        print LOG "    Permitted:   rsync $allowed_prefix <options> . <dir>\n";
+        print LOG "    Permitted:   rsync @allowed_prefix <options> . <dir>\n";
 	if ($push) {
 	    print LOG "    Running as push.\n";
 	}
@@ -880,6 +877,11 @@ sub valid_dir {
 
     # No directory traversal.
     if ($path =~ /\.\./) {
+	return 0;
+    }
+
+    # Must be absolute path.
+    if ($path !~ /^\//) {
 	return 0;
     }
 

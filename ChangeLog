@@ -27,3 +27,7 @@
 10 January 2026: rsync-client.pl: minor changes, less use of shell;
 	rsync-altroot.pl: minor change, remove unnecessary quotes.
 11 January 2026: rsync-client.pl: allow multiple setup/cleanup commands.
+8 April 2026: rsync-client.pl remove shell requirement, simplify logic, fix bug
+	that prevented pledge/unveil for server side.
+	rsync-altroot.pl remove /etc special casing.
+	rrsync use "use warnings".

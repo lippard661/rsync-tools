@@ -1,5 +1,8 @@
 BUGS:
 
+(Fixed 8 Apr 2026): error in one rsync-client.pl check for OS as openbsd causes
+pledge/unveil not to occur on server side.
+
 (Fixed 25 Sep 2025): rsync-server.pl should abort if log file can't be opened.
 
 rsync-client/rsync-server:
@@ -20,6 +23,7 @@ dirlist function could stand to do some validation.
 
 FEATURES TO ADD:
 
+(Done 8 April 2026)
 Do own glob expansion to completely avoid shell on system calls to rsync.
 
 (Done 10 Jan 2026) Avoid use of shell on system calls for setup/cleanup and everything

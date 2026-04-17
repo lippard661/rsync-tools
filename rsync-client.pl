@@ -67,6 +67,8 @@
 #    error in OS check for pledge/unveil for exec_server. Use File::Glob
 #    instead of using shell. Simplify rsync execution logic for client and
 #    server.
+# Modified 2026-04-17 by Jim Lippard to validate config file ownership and
+#    permissions and log failures, create log file with 0600 permissions.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -193,6 +195,7 @@
 
 use strict;
 use warnings;
+use Fcntl qw(:DEFAULT :flock); # for logging
 use File::Basename;
 use File::Glob ':glob';
 use Sys::Hostname;
@@ -306,6 +309,9 @@ else {
 }
 
 $other_host = $ARGV[1];
+
+# Validate config file ownership and permissions.
+validate_config_file_security();
 
 # Parse the config file, then execute client or server functions
 # as necessary. If "both" on the client side, execute push, then
@@ -540,11 +546,11 @@ sub parse_config {
 	    else {
 		$time = time();
 		$time = localtime ($time);
-		
-		open (LOG, '>>', $LOG_FILE) || die "Cannot open log file $LOG_FILE. $!\n";
 
-		print LOG "$time $0 hostname=$HOSTNAME, other_host=$other_host, CLIENT=$CLIENT, push=$push, both=$both, No matching entry in config file.\n";
-		close (LOG);
+		my $LOG = open_log_file_secure();
+
+		print $LOG "$time $0 hostname=$HOSTNAME, other_host=$other_host, CLIENT=$CLIENT, push=$push, both=$both, No matching entry in config file.\n";
+		close ($LOG);
 	    }
 	}
 	die "No matching entry in config file. $CONFIG_FILE\n";
@@ -571,7 +577,7 @@ sub exec_client {
 	$RSYNC_IDENTITY = $RSYNC_RSA_IDENTITY;
     }
     else {
-	die "Cannot find .ssh/(ed25519 ecdsa dsa rsa)_id.\n"
+	die "Cannot find .ssh/(ed25519 ecdsa dsa rsa)_id. RSA keys are no longer supported.\n"
     }
     $ENV{'RSYNC_RSH'} = "$SSH -i $RSYNC_IDENTITY";
     if ($DEBUG) {
@@ -768,9 +774,9 @@ sub exec_server {
     $time = time();
     $time = localtime ($time);
 
-    open (LOG, '>>', $LOG_FILE) || die "Cannot open log file $LOG_FILE. $!\n";
+    my $LOG = open_log_file_secure();
 
-    print LOG "$time $0 $ENV{'SSH_CONNECTION'} ***New command issued: $command\n";
+    print $LOG "$time $0 $ENV{'SSH_CONNECTION'} ***New command issued: $command\n";
 
     if ($command =~ /^rsync $allowed_prefix_re\s*([\s\w\.-]*)\s+\.\s+(.*)$/) {
 	$options = $1;
@@ -786,9 +792,9 @@ sub exec_server {
 	    }
 	    if ($path eq $allowed_paths[$idx]) {
 		$allowed_this_path = 1;
-		if (server_options_match ($options, $rsync_options[$idx])) {
+		if (server_options_match ($LOG, $options, $rsync_options[$idx])) {
 		    if ($setup_command[$idx]) {
-			print LOG "$time Setup command: $setup_command[$idx]\n";
+			print $LOG "$time Setup command: $setup_command[$idx]\n";
 			exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
 		    }
 
@@ -805,18 +811,18 @@ sub exec_server {
 			? bsd_glob($path, GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE)
 			: ($path);
 		    
-		    print LOG "$time Command issued: @this_command @allowed_prefix $options . @paths\n";
+		    print $LOG "$time Command issued: @this_command @allowed_prefix $options . @paths\n";
 		    system (@this_command, @allowed_prefix, split (/\s+/, $options), '.', @paths);
-		    print LOG "$time Command executed: @this_command @allowed_prefix $options . @paths\n";
+		    print $LOG "$time Command executed: @this_command @allowed_prefix $options . @paths\n";
 
 		    if ($cleanup_command[$idx]) {
-			print LOG "$time Cleanup command: $cleanup_command[$idx]\n";
+			print $LOG "$time Cleanup command: $cleanup_command[$idx]\n";
 			exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
 		    }
 
 		}
 		else {
-		    print LOG "$time Disallowed options: $options\n";
+		    print $LOG "$time Disallowed options: $options\n";
 		}
 		last;
 	    }
@@ -824,23 +830,94 @@ sub exec_server {
 
 	$time = time();
 	$time = localtime ($time);
-	print LOG "$time Disallowed path: $path\n" if (!$allowed_this_path);
+	print $LOG "$time Disallowed path: $path\n" if (!$allowed_this_path);
     }
     else { # Doesn't match regexp.
-	print LOG "$time Disallowed command: $command\n";
-        print LOG "    Permitted:   rsync @allowed_prefix <options> . <dir>\n";
+	print $LOG "$time Disallowed command: $command\n";
+        print $LOG "    Permitted:   rsync @allowed_prefix <options> . <dir>\n";
 	if ($push) {
-	    print LOG "    Running as push.\n";
+	    print $LOG "    Running as push.\n";
 	}
 	else {
-	    print LOG "    Running as pull.\n";
+	    print $LOG "    Running as pull.\n";
 	}
     }
 
-    close (LOG);
+    close ($LOG);
 }
 
 ### Utility subroutines.
+
+# Subroutine to die with security error message and log it.
+sub security_die {
+    my ($message) = @_;
+    
+    # Try to log the security event
+    eval {
+	my $LOG = open_log_file_secure();
+	my $timestamp = localtime (time());
+	my $remote = $ENV{'SSH_CONNECTION'} || 'local';
+	print $LOG "$timestamp SECURITY [$remote]: $message\n";
+	close($LOG);
+    };
+    # Ignore errors during logging - still die even if logging fails
+    
+    die "SECURITY: $message\n";
+}
+
+# Subroutine to verify config file ownership and permissions.
+sub validate_config_file_security {
+    my ($uid, $gid, $mode);
+    
+    if (!-e $CONFIG_FILE) {
+        security_die "Config file $CONFIG_FILE does not exist.\n";
+    }
+    
+    ($mode, $uid, $gid) = (stat($CONFIG_FILE))[2,4,5];
+    
+    # Config file must be owned by root (uid 0)
+    if ($uid != 0) {
+        security_die "Config file $CONFIG_FILE must be owned by root (currently uid $uid).\n";
+    }
+    
+    # Get the rsync user's GID
+    my $rsync_gid = getgrnam($RSYNC_USER);
+    if (!defined($rsync_gid)) {
+        security_die "Cannot determine GID for group $RSYNC_USER.\n";
+    }
+    
+    # Config file must be group-owned by rsync group
+    if ($gid != $rsync_gid) {
+        security_die "Config file $CONFIG_FILE must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $gid).\n";
+    }
+    
+    # Extract permission bits
+    my $perms = $mode & 07777;
+    
+    # Must be 0640 (rw-r-----)
+    if ($perms != 0640) {
+        security_die (sprintf("Config file must have permissions 0640 (currently %04o).\n", $perms));
+    }
+    
+    # Validate directory too
+    my $config_dir = dirname($CONFIG_FILE);
+    my ($dir_mode, $dir_uid, $dir_gid) = (stat($config_dir))[2,4,5];
+    my $dir_perms = $dir_mode & 07777;
+    
+    if ($dir_uid != 0 || $dir_gid != $rsync_gid || $dir_perms != 0750) {
+        security_die (sprintf("Config directory $config_dir must be owned by root:$RSYNC_USER with permissions 0750.\n"));
+    }
+}
+
+# Subrouting to open log file and create with 0600 permissions.
+sub open_log_file_secure {
+    my $log_fh;
+    # Create with 0600 permissions (rw-------)
+    if (!sysopen($log_fh, $LOG_FILE, O_WRONLY|O_APPEND|O_CREAT, 0600)) {
+        die "Cannot open log file $LOG_FILE: $!\n";
+    }
+    return $log_fh;
+}
 
 # Subroutine to complain if we already have one of these.
 sub check_arg {
@@ -958,7 +1035,7 @@ sub yes_or_no_list {
 # If --relative is in the options, then we allow $RELATIVE_SERVER_OPTIONS,
 # otherwise we allow $STANDARD_SERVER_OPTIONS.
 sub server_options_match {
-    my ($supplied_options, $avail_options) = @_;
+    my ($log_fh, $supplied_options, $avail_options) = @_;
     my (@split_supplied_options, @split_avail_options, $option);
 
     @split_supplied_options = optionlist ($supplied_options);
@@ -977,7 +1054,7 @@ sub server_options_match {
 
     foreach $option (@split_supplied_options) {
 	if (!grep (/^$option$/, @split_avail_options)) {
-	    print LOG "$time Disallowed individual option: $option\n";
+	    print $log_fh "$time Disallowed individual option: $option\n";
 	    return 0;
 	}
     }

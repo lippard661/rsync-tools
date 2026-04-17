@@ -23,10 +23,14 @@ dirlist function could stand to do some validation.
 
 FEATURES TO ADD:
 
-(Done 8 April 2026)
-Do own glob expansion to completely avoid shell on system calls to rsync.
+(Done 17 April 2026) Add permissions and ownership validation for
+config file and ensure log is created with 0600 permissions
+(rsync-client/rsync-server)
 
-(Done 10 Jan 2026) Avoid use of shell on system calls for setup/cleanup and everything
-else unless needed.
+(Done 8 April 2026) Do own glob expansion to completely avoid shell on
+system calls to rsync.
+
+(Done 10 Jan 2026) Avoid use of shell on system calls for
+setup/cleanup and everything else unless needed.
 
 README file could use some expansion.

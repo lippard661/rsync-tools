@@ -23,7 +23,7 @@ dirlist function could stand to do some validation.
 
 FEATURES TO ADD:
 
-(Done 17 April 2026) Add permissions and ownership validation for
+(Done 19 April 2026) Add permissions and ownership validation for
 config file and ensure log is created with 0600 permissions
 (rsync-client/rsync-server)
 

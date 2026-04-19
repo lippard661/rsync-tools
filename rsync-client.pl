@@ -69,6 +69,9 @@
 #    server.
 # Modified 2026-04-17 by Jim Lippard to validate config file ownership and
 #    permissions and log failures, create log file with 0600 permissions.
+# Modified 2026-04-19 by Jim Lippard to validate config file dir before
+#    config file (since insufficient access on dir can prevent determination
+#    if config file even exists).
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -867,46 +870,83 @@ sub security_die {
 
 # Subroutine to verify config file ownership and permissions.
 sub validate_config_file_security {
-    my ($uid, $gid, $mode);
-    
-    if (!-e $CONFIG_FILE) {
-        security_die "Config file $CONFIG_FILE does not exist.\n";
+    my ($config_dir, $dir_mode, $dir_uid, $dir_gid, $dir_perms);
+    my ($uid, $gid, $mode, $perms);
+    my ($rsync_gid);
+
+    # Get directory path for config file.
+    $config_dir = dirname ($CONFIG_FILE);
+
+    # Directory must exist and be accessible.
+    if (!-e $config_dir) {
+	security_die ("Config directory $config_dir does not exist.");
     }
-    
-    ($mode, $uid, $gid) = (stat($CONFIG_FILE))[2,4,5];
-    
+
+    if (!-d $config_dir) {
+	security_die ("Config directory path $config_dir is not a directory.");
+    }
+
+    # Get rsync user's GID for validation.
+    $rsync_gid = getgrnam ($RSYNC_USER);
+    if (!defined ($rsync_gid)) {
+	security_die ("Cannot determine GID for group $RSYNC_USER.");
+    }
+
+    # Check directory ownership and permissions.
+    ($dir_mode, $dir_uid, $dir_gid) = (stat ($config_dir))[2,4,5];
+
+    if (!defined ($dir_mode)) {
+	security_die ("Cannot stat config directory $config_dir. $!");
+    }
+
     # Config file must be owned by root (uid 0)
-    if ($uid != 0) {
-        security_die "Config file $CONFIG_FILE must be owned by root (currently uid $uid).\n";
+    if ($dir_uid != 0) {
+        security_die("Config directory $config_dir must be owned by root (currently uid $dir_uid)");
     }
     
-    # Get the rsync user's GID
-    my $rsync_gid = getgrnam($RSYNC_USER);
-    if (!defined($rsync_gid)) {
-        security_die "Cannot determine GID for group $RSYNC_USER.\n";
+    if ($dir_gid != $rsync_gid) {
+        security_die("Config directory $config_dir must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $dir_gid)");
+    }
+    
+    $dir_perms = $dir_mode & 07777;
+    if ($dir_perms != 0750) {
+        security_die(sprintf("Config directory $config_dir has wrong permissions (expected 0750, found %04o)", $dir_perms));
+    }
+
+    # Directory validated, now check file
+    if (!-e $CONFIG_FILE) {
+        security_die "Config file $CONFIG_FILE does not exist.";
+    }
+
+    if (!-f $CONFIG_FILE) {
+        security_die("Config file path $CONFIG_FILE is not a regular file");
+    }
+
+    # Check file ownership and permissions.
+    ($mode, $uid, $gid) = (stat($CONFIG_FILE))[2,4,5];
+
+    if (!defined($mode)) {
+        security_die("Cannot stat config file $CONFIG_FILE: $!");
+    }
+
+    # Config file must be owned by root.
+    if ($uid != 0) {
+        security_die("Config file $CONFIG_FILE must be owned by root (currently uid $uid)");
     }
     
     # Config file must be group-owned by rsync group
     if ($gid != $rsync_gid) {
-        security_die "Config file $CONFIG_FILE must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $gid).\n";
+        security_die "Config file $CONFIG_FILE must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $gid).";
     }
     
     # Extract permission bits
-    my $perms = $mode & 07777;
+    $perms = $mode & 07777;
     
     # Must be 0640 (rw-r-----)
     if ($perms != 0640) {
-        security_die (sprintf("Config file must have permissions 0640 (currently %04o).\n", $perms));
+        security_die (sprintf("Config file must have permissions 0640 (currently %04o).", $perms));
     }
-    
-    # Validate directory too
-    my $config_dir = dirname($CONFIG_FILE);
-    my ($dir_mode, $dir_uid, $dir_gid) = (stat($config_dir))[2,4,5];
-    my $dir_perms = $dir_mode & 07777;
-    
-    if ($dir_uid != 0 || $dir_gid != $rsync_gid || $dir_perms != 0750) {
-        security_die (sprintf("Config directory $config_dir must be owned by root:$RSYNC_USER with permissions 0750.\n"));
-    }
+
 }
 
 # Subrouting to open log file and create with 0600 permissions.

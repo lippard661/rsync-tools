@@ -31,5 +31,5 @@
 	that prevented pledge/unveil for server side.
 	rsync-altroot.pl remove /etc special casing.
 	rrsync use "use warnings".
-17 April 2026: rsync-client.pl validates config file ownership and permissions,
+19 April 2026: rsync-client.pl validates config file ownership and permissions,
 	ensures log file permissions are 0600 on creation.

@@ -1,302 +1,208 @@
 # rsync-tools
 
-A collection of Perl scripts for secure, automated rsync operations using an unprivileged user account. These tools implement defense-in-depth security through file permissions, SSH key restrictions, sudo/doas controls, and OpenBSD's pledge/unveil when available.
+A collection of Perl scripts for secure, automated rsync operations using an
+unprivileged user account. These tools implement defense-in-depth security
+through file permissions, SSH key restrictions, doas/sudo controls, and
+OpenBSD's pledge/unveil when available.
+
+Primary platform is OpenBSD; also runs on Linux and macOS. Not all features
+are available or meaningful on non-OpenBSD platforms.
 
 ## Tools Included
 
 ### rsync-client.pl / rsync-server.pl
 
-**Purpose**: Automated rsync between systems using a non-privileged `_rsyncu` user, with optional privilege escalation via sudo/doas only for specific operations.
+Automated rsync between systems using a non-privileged `_rsyncu` user, with
+optional privilege escalation via doas (or sudo on Linux/macOS) only for
+specific operations. rsync-server.pl is installed as a symlink to
+rsync-client.pl.
 
 **Key Features**:
-- **Defense-in-depth security model**: Multiple layers of protection including unprivileged execution, config file validation, SSH restrictions, and sudo/doas controls
-- **Flexible operations**: Support for push, pull, and bidirectional sync
-- **Setup/cleanup hooks**: Run commands before and after each rsync operation
-- **OpenBSD security**: Uses pledge() and unveil() on OpenBSD systems
-- **Comprehensive logging**: All operations and security violations logged with source IP
-- **Config file validation**: Runtime checks ensure proper ownership (root:_rsyncu) and permissions (0640)
-- **Path validation**: Prevents directory traversal and restricts to absolute paths only
+- Unprivileged execution with narrow doas/sudo permissions for rsync only
+- Config file validated at runtime for correct ownership and permissions
+- SSH key restrictions via authorized_keys forced commands
+- Setup and cleanup hooks: run commands before and after each rsync operation
+- Comprehensive logging of all operations and security events
+- Path validation: absolute paths only, no directory traversal
+- Uses pledge/unveil on OpenBSD
 
 **Security Model**:
 
-The security model employs multiple independent layers:
+1. `_rsyncu` user cannot modify system files or config
+2. Config file must be owned root:_rsyncu with mode 0640, validated at runtime
+3. authorized_keys restricts each SSH key to a specific command and source host
+4. doas/sudo permits only specific rsync commands, not arbitrary escalation
+5. All paths must be absolute; directory traversal rejected
+6. pledge/unveil on OpenBSD restricts system calls and filesystem access
 
-1. **Unprivileged user**: `_rsyncu` user cannot modify system files or config
-2. **Config file restrictions**: Must be owned by root:_rsyncu with mode 0640, validated at runtime
-3. **SSH key restrictions**: `authorized_keys` limits commands and source IPs
-4. **Sudo/doas controls**: Only specific rsync commands can be elevated
-5. **Path validation**: All paths must be absolute, no directory traversal allowed
-6. **OpenBSD pledge/unveil**: Restricts system calls and filesystem access
+**Configuration**:
 
-**Configuration Example**:
+`/etc/rsync/rsync.conf` on both client and server defines what is synced,
+which SSH identity to use, whether doas/sudo is required on either side,
+and optional pre/post commands for setup and cleanup. Example:
 
 ```
-# /etc/rsync/rsync.conf
 source: backupserver
 destination: mailserver
 source-dirlist: /var/mail/, /etc/mail/
 destination-dirlist: /backup/mail/, /backup/mail-config/
 rsync-options: --delete --delete-after, --delete --delete-after
-source-sudo: no, no
-destination-sudo: yes, yes
+source-doas: no, no
+destination-doas: yes, yes
 ```
 
 **Required File Permissions**:
-```bash
-# Config directory
-chown root:_rsyncu /etc/rsync
-chmod 750 /etc/rsync
-
-# Config file  
-chown root:_rsyncu /etc/rsync/rsync.conf
-chmod 640 /etc/rsync/rsync.conf
-
-# Optional: Set immutable flag for additional protection
-chflags schg /etc/rsync/rsync.conf  # FreeBSD/OpenBSD
-chattr +i /etc/rsync/rsync.conf     # Linux
+```
+/etc/rsync/           root:_rsyncu  0750
+/etc/rsync/rsync.conf root:_rsyncu  0640
 ```
 
-**SSH Configuration**:
+Consider protecting rsync.conf with immutability flags via
+[syslock](https://github.com/lippard661/syslock) on OpenBSD/Linux, since
+the config file describes your network topology and sync relationships.
 
-On the server side in `~_rsyncu/.ssh/authorized_keys`:
+**SSH authorized_keys**:
+
+On the server, restrict each key to a specific command and source address:
 ```
-command="/usr/local/bin/rsync-server.pl pull clienthost",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... _rsyncu@client
+command="/usr/local/bin/rsync-server.pl pull clienthost",from="203.0.113.10",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... _rsyncu@client
 ```
 
-**Sudo/Doas Configuration**:
-
-Allow specific rsync commands only:
+**doas Configuration** (OpenBSD `/etc/doas.conf`):
 ```
-# /etc/sudoers (or /etc/doas.conf)
-Defaults:_rsyncu env_keep += "RSYNC_RSH"
-Cmnd_Alias RSYNC_CMDS = /usr/local/bin/rsync --server --sender -vlogDtprze.iLsfxCIvu * . /data/*, \
-                        /usr/local/bin/rsync --server -vlogDtprze.iLsfxCIvu * . /backup/*
-_rsyncu ALL=(ALL) NOPASSWD: RSYNC_CMDS
+permit nopass setenv { RSYNC_RSH } _rsyncu as root cmd /usr/local/bin/rsync args --server --sender ...
 ```
 
 **Usage**:
-```bash
-# Client side
+```
 rsync-client.pl pull server-hostname
 rsync-client.pl push server-hostname
 rsync-client.pl both server-hostname
-
-# Server side (typically invoked via SSH authorized_keys)
-rsync-server.pl pull client-hostname
-rsync-server.pl push client-hostname
 ```
-
-**Supported SSH Key Types** (in priority order):
-1. ED25519 (preferred)
-2. ECDSA (fallback)
-3. ~~RSA (deprecated - no longer supported)~~
+Server side is typically invoked via SSH authorized_keys, not directly.
 
 ---
 
 ### rrsync
 
-**Purpose**: Restrict rsync operations via SSH `authorized_keys` forced commands. Can enforce read-only access or limit operations to specific directories.
+Restrict rsync operations via SSH `authorized_keys` forced commands. A Perl
+implementation with feature parity with the Python rrsync distributed with
+rsync, plus logging and OpenBSD pledge/unveil support.
 
-**Key Features**:
-- **Perl implementation**: Updated to include feature parity with the newer Python version included with rsync distributions
-- **OpenBSD security**: Uses pledge() and unveil() when available
-- **Flexible restrictions**: Can restrict to read-only or specific directory paths
-- **Drop-in replacement**: Compatible with the standard rrsync interface
+Can enforce read-only access, limit operations to a specific directory, or
+both. Used with an unprivileged `_rsyncu` user for rsnapshot backups and
+distribute.pl file distribution.
 
-**Usage**:
-
-In `~user/.ssh/authorized_keys`:
+**Usage in authorized_keys**:
 ```
-command="rrsync -ro /data/backups" ssh-ed25519 AAAA... backup@client
+command="rrsync -ro /data/backups",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA... backup@client
 ```
-
-This restricts the key to read-only access to `/data/backups` only.
 
 ---
 
 ### rsync-altroot.pl
 
-**Purpose**: Tool for backing up to `/altroot` on usually-unmounted filesystems on a local machine.
-
-**Key Features**:
-- **Safe mounting**: Handles mounting and unmounting of backup filesystems
-- **Local backups**: Optimized for local machine backup workflows
-- **Altroot convention**: Follows OpenBSD's `/altroot` backup convention
-
-**Use Case**: maintaining a local backup on a separate filesystem that remains unmounted except during backup operations, providing protection against:
-- Accidental deletion
-- Filesystem corruption affecting the primary filesystem
+Syncs a running system to an `/altroot` filesystem on a local machine,
+following OpenBSD's altroot convention. Handles mounting and unmounting
+safely. Useful as an additional layer of local backup alongside rsnapshot,
+and for quick recovery of accidentally deleted files from /altroot/etc and
+similar locations. Less critical for VM-based systems where snapshots are
+available, but still useful.
 
 ---
 
 ## Installation
 
-### From Source
+### Recommended: OpenBSD signed package
 
-```bash
-# Download
-wget https://www.discord.org/lippard/software/rsync-tools-20260419.tgz
-
-# OpenBSD package (can be installed on OpenBSD with pkg_add; on OpenBSD, Linux or macOS with install.pl)
-wget https://www.discord.org/lippard/software/OpenBSD-packages/rsync-tools-20260419.tgz
-
-# Verify signature (optional but recommended for OpenBSD package)
-wget https://www.discord.org/lippard/software/discord.org-2026-pkg.pub
-signify -C -p discord.org-2026-pkg.pub -x rsync-tools-20260419.tgz
-
-# Extract
-tar xzf rsync-tools-20260419.tgz
-cd rsync-tools-20260419
-
-# Install scripts
-sudo cp rsync-client.pl /usr/local/bin/
-sudo ln -s /usr/local/bin/rsync-client.pl rsync-server.pl
-sudo cp rsync-altroot.pl /usr/local/bin/
-sudo cp rrsync /usr/local/bin/
-sudo chmod 755 /usr/local/bin/rsync-*.pl /usr/local/bin/rrsync
-
-# Create rsync user
-sudo useradd -m -d /home/_rsyncu -s /bin/sh _rsyncu  # Linux
-sudo useradd -m -d /home/_rsyncu -s /bin/sh _rsyncu  # OpenBSD/FreeBSD
-
-# Create config directory
-sudo mkdir -p /etc/rsync
-sudo chown root:_rsyncu /etc/rsync
-sudo chmod 750 /etc/rsync
+```
+pkg_add ./rsync-tools-20260419.tgz
 ```
 
-### OpenBSD Package
+Or using [install.pl](https://github.com/lippard661/distribute) on OpenBSD,
+Linux, or macOS, copy the signed package to /var/install (or
+/var/installation on macOS) and run install.pl.
 
-```bash
-# Install the signed package
-pkg_add rsync-tools-20260419.tgz
+The OpenBSD package is signed with signify. To verify:
+```
+signify -C -p discord.org-2026-pkg.pub -x rsync-tools-20260419.tgz
+```
+Public key: https://www.discord.org/lippard/software/discord.org-2026-pkg.pub
+
+### Manual installation
+
+```sh
+# Copy scripts to /usr/local/bin/
+cp src/rsync-client.pl src/rsync-altroot.pl src/rrsync /usr/local/bin/
+ln -s /usr/local/bin/rsync-client.pl /usr/local/bin/rsync-server.pl
+chmod 755 /usr/local/bin/rsync-client.pl /usr/local/bin/rsync-altroot.pl /usr/local/bin/rrsync
+
+# Create _rsyncu user (OpenBSD)
+useradd -m -d /home/_rsyncu -s /bin/sh _rsyncu
+
+# Create _rsyncu user (Linux)
+useradd -m -d /home/_rsyncu -s /bin/sh _rsyncu
+
+# Create config directory
+mkdir -p /etc/rsync
+chown root:_rsyncu /etc/rsync
+chmod 750 /etc/rsync
+
+# Create config file
+touch /etc/rsync/rsync.conf
+chown root:_rsyncu /etc/rsync/rsync.conf
+chmod 640 /etc/rsync/rsync.conf
 ```
 
 ## Platform Support
 
-- **OpenBSD**: Full support including pledge() and unveil()
+- **OpenBSD**: Full support including pledge/unveil
 - **Linux**: Full support (without pledge/unveil)
-- **Other Unix-like**: Should work but untested
+- **macOS**: Supported (without pledge/unveil)
 
-## Security Best Practices
+Not tested on FreeBSD or other platforms, though it may work.
 
-### 1. File Permissions
+## Security Notes
 
-Always maintain strict file permissions:
-```bash
-# Config directory: 0750 root:_rsyncu
-# Config file: 0640 root:_rsyncu
-# SSH directory: 0700 _rsyncu:_rsyncu
-# Private keys: 0600 _rsyncu:_rsyncu
-# Log file: 0600 _rsyncu:_rsyncu (created automatically)
-```
+- Config files should be root-readable only (0640 root:_rsyncu for
+  rsync.conf; consider 0600 root:root for files not needing group access)
+- rsync.conf reveals network topology and sync relationships; protect it
+  accordingly
+- Use ED25519 SSH keys; RSA is no longer supported, DSA was removed in 2025
+- Use different SSH keys for different sync relationships
+- Monitor `~_rsyncu/rsync.out` for lines containing "SECURITY"
 
-### 2. SSH Key Restrictions
+## Related Tools
 
-Use `command=`, `from=`, and other restrictions in `authorized_keys`:
-```
-command="/usr/local/bin/rsync-server.pl pull client",from="192.168.1.100",no-port-forwarding,no-X11-forwarding,no-agent-forwarding,no-pty ssh-ed25519 AAAA...
-```
+These tools are part of a set of security tools for OpenBSD (and Linux/macOS):
 
-### 3. Sudo/Doas Configuration
-
-Only allow specific rsync commands with explicit paths:
-- Never use wildcards in sudo rules beyond what's shown
-- Each rsync operation should have its own specific rule
-- Use command aliases to organize related operations
-
-### 4. Immutability Flags
-
-Set immutable flags on config files:
-```bash
-chflags schg /etc/rsync/rsync.conf  # BSD
-chattr +i /etc/rsync/rsync.conf     # Linux
-```
-
-This prevents modification even by root until the flag is removed.
-
-### 5. Monitoring
-
-- Monitor `~_rsyncu/rsync.out` for security violations
-- Look for lines containing "SECURITY" 
-- Alert on repeated violations from the same IP
-- Review logs regularly for unusual activity
-
-### 6. Key Management
-
-- Use ED25519 keys (RSA deprecated)
-- Use different keys for different purposes (backup, replication, etc.)
-- Rotate keys annually or after personnel changes
-- Remove old `authorized_keys` entries immediately
-
-## Troubleshooting
-
-### "SECURITY: Config file must have permissions 0640"
-Fix permissions:
-```bash
-sudo chmod 640 /etc/rsync/rsync.conf
-```
-
-### "SECURITY: Config directory must be group-owned by _rsyncu"
-Fix ownership:
-```bash
-sudo chown root:_rsyncu /etc/rsync
-```
-
-### "Cannot find .ssh/(ed25519|ecdsa)_id"
-Generate an ED25519 key:
-```bash
-su - _rsyncu
-ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
-```
-
-### "Configuration file has invalid dir"
-Ensure all paths in config file:
-- Start with `/` (absolute paths only)
-- Don't contain `..` (no directory traversal)
-- Use only `[A-Za-z0-9._/-]` and `*` (in filenames only)
-
-## Testing Your Setup
-
-```bash
-# Test config validation
-chmod 644 /etc/rsync/rsync.conf
-rsync-client.pl pull server  # Should fail with SECURITY error
-chmod 640 /etc/rsync/rsync.conf
-
-# Test SSH key restrictions
-ssh -i ~_rsyncu/.ssh/id_ed25519 server "ls /"  # Should be rejected
-
-# Test sudo restrictions  
-sudo rsync --server -vlogDtprze.iLsfxCIvu . /etc/  # Should fail if not in sudoers
-
-# Test actual rsync
-rsync-client.pl pull server  # Should work if config is correct
-```
+- [syslock](https://github.com/lippard661/syslock) — filesystem immutability flag management
+- [distribute](https://github.com/lippard661/distribute) — uses rrsync/_rsyncu for secure file distribution
+- [reportnew](https://github.com/lippard661/reportnew) — log monitoring; monitors _rsyncu activity
+- [sigtree](https://github.com/lippard661/sigtree) — file integrity monitoring
 
 ## Development History
 
-Originally written in 2003, these tools have been continuously maintained and updated to incorporate modern security practices:
+Originally written January 2003. Continuously maintained since then:
 
-- **2003**: Initial release with DSA key support
-- **2012**: Added ECDSA support
-- **2015**: Added ED25519 support, doas support
-- **2023**: Added OpenBSD pledge/unveil support
-- **2024**: Enhanced path validation, removed shell invocations
-- **2025**: Removed DSA support
-- **2026**: Added runtime config validation, enhanced security logging, removed RSA support
+- 2003: Initial release with DSA key support
+- 2012: Added ECDSA support
+- 2015: Added ED25519 support, doas support
+- 2023: Added OpenBSD pledge/unveil support
+- 2024: Enhanced path validation, removed shell invocations
+- 2025: Removed DSA support
+- 2026: Added runtime config validation, enhanced security logging, removed RSA support
+
+## Author
+
+Jim Lippard  
+https://www.discord.org/lippard/  
+https://github.com/lippard661
 
 ## License
 
-These tools are open source, see LICENSE in repo.
+See LICENSE and individual files for license information.
 
 ## Changelog
 
-See docs/CHANGELOG and individual script headers for detailed modification history.
-
-**Latest Release (20260419)**:
-- Runtime config file validation with ownership and permission checks
-- Security event logging with source IP tracking
-- Enhanced error messages using actual system errors ($!)
-- Improved path validation
-- Updated documentation
+See docs/ChangeLog for detailed modification history.

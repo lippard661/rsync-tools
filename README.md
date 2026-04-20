@@ -135,9 +135,12 @@ This restricts the key to read-only access to `/data/backups` only.
 
 ```bash
 # Download
-wget https://www.discord.org/lippard/software/rsync-tools-20260417.tgz
+wget https://www.discord.org/lippard/software/rsync-tools-20260419.tgz
 
-# Verify signature (optional but recommended)
+# OpenBSD package (can be installed on OpenBSD with pkg_add; on OpenBSD, Linux or macOS with install.pl)
+wget https://www.discord.org/lippard/software/OpenBSD-packages/rsync-tools-20260419.tgz
+
+# Verify signature (optional but recommended for OpenBSD package)
 wget https://www.discord.org/lippard/software/discord.org-2026-pkg.pub
 signify -C -p discord.org-2026-pkg.pub -x rsync-tools-20260419.tgz
 
@@ -147,7 +150,7 @@ cd rsync-tools-20260419
 
 # Install scripts
 sudo cp rsync-client.pl /usr/local/bin/
-sudo cp rsync-server.pl /usr/local/bin/
+sudo ln -s /usr/local/bin/rsync-client.pl rsync-server.pl
 sudo cp rsync-altroot.pl /usr/local/bin/
 sudo cp rrsync /usr/local/bin/
 sudo chmod 755 /usr/local/bin/rsync-*.pl /usr/local/bin/rrsync
@@ -172,7 +175,6 @@ pkg_add rsync-tools-20260419.tgz
 ## Platform Support
 
 - **OpenBSD**: Full support including pledge() and unveil()
-- **FreeBSD**: Full support (without pledge/unveil)
 - **Linux**: Full support (without pledge/unveil)
 - **Other Unix-like**: Should work but untested
 

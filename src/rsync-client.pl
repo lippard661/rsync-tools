@@ -72,6 +72,9 @@
 # Modified 2026-04-19 by Jim Lippard to validate config file dir before
 #    config file (since insufficient access on dir can prevent determination
 #    if config file even exists).
+# Modified 2026-04-29 by Jim Lippard to reject globs in sources where source-sudo
+#    is 'yes' since those can't be expanded without privilege (which would either
+#    require either using shell expansion or adding some helper cruft).
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -498,6 +501,17 @@ sub parse_config {
 	    }
 	    if ($have_dest_cleanup && $#source_dirlist != $#dest_cleanup) {
 		die "Configuration file entry for source $source and destination $destination has differing numbers of source directories and dest-cleanup entries.\n";
+	    }
+
+	    # Validate glob + sudo combination
+	    if ($have_source_sudo) {
+		for (my $idx = 0; $idx <= $#source_dirlist; $idx++) {
+		    if ($source_sudo[$idx] eq 'yes' && $source_dirlist[$idx] =~ /\*/) {
+			die "Configuration error: source-dirlist entry \"$source_dirlist[$idx]\" contains glob pattern (*) but source-sudo is 'yes'.\n" .
+			    "Glob expansion happens before privilege escalation, so the directory must be readable by $RSYNC_USER.\n" .
+			    "Either: (1) make directory readable by $RSYNC_USER and set source-sudo to 'no', of (2) use explicit file paths instead of globs.\n";
+		    }
+		}
 	    }
 
 	    if (((($CLIENT && $push) || (!$CLIENT && !$push)) &&

@@ -33,3 +33,4 @@
 	rrsync use "use warnings".
 19 April 2026: rsync-client.pl validates config file ownership and permissions,
 	ensures log file permissions are 0600 on creation.
+29 April 2026: rsync-client.pl rejects globs when doas/sudo is used.

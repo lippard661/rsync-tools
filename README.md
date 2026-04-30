@@ -168,6 +168,8 @@ Not tested on FreeBSD or other platforms, though it may work.
   rsync.conf; consider 0600 root:root for files not needing group access)
 - rsync.conf reveals network topology and sync relationships; protect it
   accordingly
+- rsync.conf can use globs at the end of a filename for a source, but
+  only if source-sudo is 'no'.
 - Use ED25519 SSH keys; RSA is no longer supported, DSA was removed in 2025
 - Use different SSH keys for different sync relationships
 - Monitor `~_rsyncu/rsync.out` for lines containing "SECURITY"

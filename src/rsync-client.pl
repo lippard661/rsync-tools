@@ -75,6 +75,11 @@
 # Modified 2026-04-29 by Jim Lippard to reject globs in sources where source-sudo
 #    is 'yes' since those can't be expanded without privilege (which would either
 #    require either using shell expansion or adding some helper cruft).
+# Modified 2026-05-02 by Jim Lippard to clean up some minor errors: really remove
+#    RSA SSH ID support this time, fix error message, make security_die calls
+#    consistent, fix typo in error message, remove unused variable declarations
+#    and some dead, commented-out code, document a couple limitations (no spaces in
+#    command arguments, dir paths must be exactly consistent between client and server.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -219,7 +224,6 @@ my $RSYNC_USER_SSHDIR = "$RSYNC_USER_HOME/.ssh";
 my $RSYNC_IDENTITY = "$RSYNC_USER_SSHDIR/id_dsa";
 my $RSYNC_ED25519_IDENTITY = "$RSYNC_USER_SSHDIR/id_ed25519"; # preferred
 my $RSYNC_ECDSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_ecdsa";
-my $RSYNC_RSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_rsa"; # deprecated with SHA-1
 
 my $CONFIG_FILE = '/etc/rsync/rsync.conf';
 my $LOG_FILE = "$RSYNC_USER_HOME/rsync.out";
@@ -287,7 +291,7 @@ my ($source_info, $destination_info, @rsync_command);
 
 # Server variables.
 my (@allowed_prefix, @allowed_paths, $options, $need_sudo, $command, $time,
-    $path, $allowed_path, $allowed_this_path);
+    $path, $allowed_this_path);
 
 ### Main program.
 
@@ -316,7 +320,9 @@ else {
 
 $other_host = $ARGV[1];
 
-# Validate config file ownership and permissions.
+# Validate config file ownership and permissions. There's a TOCTOU window between this
+# check and parse_config, but config file should be owned by root (and immutable) if
+# following best practices.
 validate_config_file_security();
 
 # Parse the config file, then execute client or server functions
@@ -509,7 +515,7 @@ sub parse_config {
 		    if ($source_sudo[$idx] eq 'yes' && $source_dirlist[$idx] =~ /\*/) {
 			die "Configuration error: source-dirlist entry \"$source_dirlist[$idx]\" contains glob pattern (*) but source-sudo is 'yes'.\n" .
 			    "Glob expansion happens before privilege escalation, so the directory must be readable by $RSYNC_USER.\n" .
-			    "Either: (1) make directory readable by $RSYNC_USER and set source-sudo to 'no', of (2) use explicit file paths instead of globs.\n";
+			    "Either: (1) make directory readable by $RSYNC_USER and set source-sudo to 'no', or (2) use explicit file paths instead of globs.\n";
 		    }
 		}
 	    }
@@ -590,11 +596,8 @@ sub exec_client {
     elsif (-e $RSYNC_ECDSA_IDENTITY) {
 	$RSYNC_IDENTITY = $RSYNC_ECDSA_IDENTITY;
     }
-    elsif (-e $RSYNC_RSA_IDENTITY) {
-	$RSYNC_IDENTITY = $RSYNC_RSA_IDENTITY;
-    }
     else {
-	die "Cannot find .ssh/(ed25519 ecdsa dsa rsa)_id. RSA keys are no longer supported.\n"
+	die "Cannot find .ssh/(ed25519 ecdsa)_id. RSA and DSA keys are no longer supported.\n"
     }
     $ENV{'RSYNC_RSH'} = "$SSH -i $RSYNC_IDENTITY";
     if ($DEBUG) {
@@ -732,7 +735,7 @@ sub exec_server {
 	@cleanup_command = @source_cleanup;
     }
 
-    my $allowed_prefix_re = ($push) ? '--server' : '--server --sender';
+    my $allowed_prefix_re = ($push) ? '--server' : '--server --sender'; # used in regexp
     @allowed_prefix = ($push) ? ('--server') : ('--server', '--sender');
 
     # Use pledge and unveil to restrict access for server. stdio already included.
@@ -756,7 +759,7 @@ sub exec_server {
 	    }
 	}
 
-		foreach $command (@setup_command) {
+	foreach $command (@setup_command) {
 	    if ($command) {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
@@ -807,6 +810,7 @@ sub exec_server {
 	    else {
 		$need_sudo = $source_sudo[$idx];
 	    }
+	    # Requires strict matching (e.g., can't have dir with terminal slash in client config but not in server config).
 	    if ($path eq $allowed_paths[$idx]) {
 		$allowed_this_path = 1;
 		if (server_options_match ($LOG, $options, $rsync_options[$idx])) {
@@ -915,42 +919,42 @@ sub validate_config_file_security {
 
     # Config file must be owned by root (uid 0)
     if ($dir_uid != 0) {
-        security_die("Config directory $config_dir must be owned by root (currently uid $dir_uid)");
+        security_die ("Config directory $config_dir must be owned by root (currently uid $dir_uid)");
     }
     
     if ($dir_gid != $rsync_gid) {
-        security_die("Config directory $config_dir must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $dir_gid)");
+        security_die ("Config directory $config_dir must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $dir_gid)");
     }
     
     $dir_perms = $dir_mode & 07777;
     if ($dir_perms != 0750) {
-        security_die(sprintf("Config directory $config_dir has wrong permissions (expected 0750, found %04o)", $dir_perms));
+        security_die (sprintf("Config directory $config_dir has wrong permissions (expected 0750, found %04o)", $dir_perms));
     }
 
     # Directory validated, now check file
     if (!-e $CONFIG_FILE) {
-        security_die "Config file $CONFIG_FILE does not exist.";
+        security_die ("Config file $CONFIG_FILE does not exist.");
     }
 
     if (!-f $CONFIG_FILE) {
-        security_die("Config file path $CONFIG_FILE is not a regular file");
+        security_die ("Config file path $CONFIG_FILE is not a regular file");
     }
 
     # Check file ownership and permissions.
     ($mode, $uid, $gid) = (stat($CONFIG_FILE))[2,4,5];
 
     if (!defined($mode)) {
-        security_die("Cannot stat config file $CONFIG_FILE: $!");
+        security_die ("Cannot stat config file $CONFIG_FILE: $!");
     }
 
     # Config file must be owned by root.
     if ($uid != 0) {
-        security_die("Config file $CONFIG_FILE must be owned by root (currently uid $uid)");
+        security_die ("Config file $CONFIG_FILE must be owned by root (currently uid $uid)");
     }
     
     # Config file must be group-owned by rsync group
     if ($gid != $rsync_gid) {
-        security_die "Config file $CONFIG_FILE must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $gid).";
+        security_die ("Config file $CONFIG_FILE must be group-owned by $RSYNC_USER (expected gid $rsync_gid, found $gid).");
     }
     
     # Extract permission bits
@@ -1093,14 +1097,6 @@ sub server_options_match {
     my (@split_supplied_options, @split_avail_options, $option);
 
     @split_supplied_options = optionlist ($supplied_options);
-#    @split_avail_options = optionlist ($avail_options);
-
-#    if (grep (/^--relative/, @split_avail_options)) {
-#	push (@split_avail_options, $RELATIVE_SERVER_OPTIONS);
-#    }
-#    else {
-#	push (@split_avail_options, $STANDARD_SERVER_OPTIONS);
-#    }
 
     @split_avail_options = @POSSIBLE_SERVER_OPTIONS;
 
@@ -1117,6 +1113,7 @@ sub server_options_match {
 }
 
 # Subroutine to execute a command without invoking shell.
+# Note: Arguments cannot contain whitespace. Use scripts for complex commands.
 sub exec_command {
     my ($command, $allow_multiple) = @_;
     my (@commands, @command);

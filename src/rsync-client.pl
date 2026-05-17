@@ -80,6 +80,18 @@
 #    consistent, fix typo in error message, remove unused variable declarations
 #    and some dead, commented-out code, document a couple limitations (no spaces in
 #    command arguments, dir paths must be exactly consistent between client and server.
+# Modified 2026-05-17 by Jim Lippard after Gemini security assessment which
+#    claimed to find five security issues, all of which were bogus. Updated
+#    comments to explain unveiling on setup-command/cleanup-command.
+#    (Gemini claimed issues were (1) post-unveil traversal, based on
+#    wrong assumption paths were from SSH_ORIGINAL_COMMAND instead of
+#    config, (2) setgid denial of service on config directory, but
+#    fail-closed is the intended design for a permissions error,
+#    (3) server-side glob won't work, it does work and the suggested
+#    change would break it, (4) confabulated stray brace at the end of
+#    the script, (5) multiple commands in setup/cleanup unveil
+#    "blind spot" based on false assumption that unveil environments
+#    are propagated over system calls. No actual issues to fix.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -201,6 +213,14 @@
 
 # Setup commands will be executed before rsync, cleanup commands will be
 # executed after the rsync.
+
+# Note on OpenBSD: Setup/cleanup commands and all commands in
+# semicolon-separated chains (e.g., "cmd1; cmd2; cmd3") have their binary
+# paths automatically unveiled with rx permissions. Once executed, these
+# commands run without unveil restrictions inherited from rsync-client.pl,
+# so they can freely access any files their normal Unix permissions allow.
+# rx is used instead of x alone to avoid mysterious failures when the
+# commands themselves are being rsynced (e.g., as part of a backup).
 
 ### Required packages.
 

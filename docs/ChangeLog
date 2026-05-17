@@ -35,3 +35,8 @@
 	ensures log file permissions are 0600 on creation.
 29 April 2026: rsync-client.pl rejects globs when doas/sudo is used.
 2 May 2026: rsync-client.pl cleanup variety of minor issues.
+17 May 2026: rrsync: fix exploitable vuln in glob processing order,
+	remove DNS resolution on host names in logging, remove 'dns'
+	pledge.
+	rsync-altroot: remove bareword filehandles.
+	rsync-client: add comments on setup/cleanup unveiling, no code change.

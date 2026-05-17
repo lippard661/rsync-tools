@@ -1,5 +1,9 @@
 BUGS:
 
+(Fixed 17 May 2026): rrsync: exploitable vulnerability in glob
+expansion order, removed hostname resolution for logging, removed
+'dns' pledge.
+
 (Fixed 8 Apr 2026): error in one rsync-client.pl check for OS as openbsd causes
 pledge/unveil not to occur on server side.
 

@@ -116,7 +116,7 @@ available, but still useful.
 ### Recommended: OpenBSD signed package
 
 ```
-pkg_add ./rsync-tools-20260419.tgz
+pkg_add ./rsync-tools-<version>.tgz
 ```
 
 Or using [install.pl](https://github.com/lippard661/distribute) on OpenBSD,
@@ -125,7 +125,7 @@ Linux, or macOS, copy the signed package to /var/install (or
 
 The OpenBSD package is signed with signify. To verify:
 ```
-signify -C -p discord.org-2026-pkg.pub -x rsync-tools-20260419.tgz
+signify -C -p discord.org-2026-pkg.pub -x rsync-tools-<version>.tgz
 ```
 Public key: https://www.discord.org/lippard/software/discord.org-2026-pkg.pub
 

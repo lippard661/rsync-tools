@@ -29,6 +29,9 @@
 # Modified 2025-08-28 by Jim Lippard to update / contents and add /share.
 # Modified 2025-09-15 by Jim Lippard to support Linux rsync path.
 # Modified 2026-01-10 by Jim Lippard to remove unnecessary quotes.
+# Modified 2026-04-08 by Jim Lippard to add "use warnings" and remove
+#    unneeded /etc special-casing.
+# Modified 2026-05-17 by Jim Lippard to not use bareword filehandles.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -44,6 +47,7 @@
 # partitions in the VMware data stores.
 
 use strict;
+use warnings;
 use Getopt::Long;
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";
@@ -137,9 +141,10 @@ if ($^O eq 'openbsd') {
 }
 
 # Get device names from /etc/fstab.
-if (open (FSTAB_HANDLE, '<', $FSTAB)) {
-    while (<FSTAB_HANDLE>) {
-	chop;
+my $fstab_fh;
+if (open ($fstab_fh, '<', $FSTAB)) {
+    while (<$fstab_fh>) {
+	chomp;
 	if (/^[#]*([\S]+)\s+([\S]+)\s*/) {
 	       $fstab{$2} = $1;
 	} #if
@@ -148,7 +153,7 @@ if (open (FSTAB_HANDLE, '<', $FSTAB)) {
 else {
     die "Cannot open $FSTAB.\n";
 }
-close (FSTAB_HANDLE);
+close ($fstab_fh);
 
 foreach $dir (@FILESYSTEMS) {
     if (defined ($fstab{$device_map{$dir}})) {
@@ -174,12 +179,7 @@ if ($rsync) {
     foreach $directory (@ROOT_DIRS) {
 	if (-d $directory || $directory eq '') {
 	    print "rsync on $directory to $rsync_target\n";
-	    if ($directory eq '/etc') {
-		system ($RSYNC, '-avz', '--exclude', "'*scache.*'", '--delete', $directory, $rsync_target) if (!$DEBUG);
-	    }
-	    else {
-		system ($RSYNC, '-avz', '--delete', $directory, $rsync_target) if (!$DEBUG);
-	    }
+	    system ($RSYNC, '-avz', '--delete', $directory, $rsync_target) if (!$DEBUG);
 	}
     }
 
@@ -198,7 +198,7 @@ if ($unmount) {
 	foreach $filesystem (reverse (@FILESYSTEMS)) {
 	    if (defined ($device{$filesystem}) && (-d $filesystem || $filesystem eq '')) {
 		print "Unmounting /altroot$filesystem\n";
-		system ("$UNMOUNT", "/altroot$filesystem") if (!$DEBUG);
+		system ($UNMOUNT, "/altroot$filesystem") if (!$DEBUG);
 	    }
     }
 }

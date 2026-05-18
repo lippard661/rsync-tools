@@ -51,9 +51,8 @@
 # Modified 17 May 2026 by Jim Lippard to validate args after glob
 #    expansion instead of before (already mitigated on OpenBSD but
 #    was exploitable under Linux/macOS). Remove hostname resolution
-#    on IP addresses (which doesn't support IPv6 anyway), widen log
-#    field for IP addresses to 39 characters. Remove unneeded 'dns'
-#    pledge
+#    on IP addresses (which doesn't support IPv6 anyway), remove
+#    unneeded 'dns' pledge.
 
 use strict;
 use warnings;
@@ -397,7 +396,7 @@ if ($write_log) {
     $host =~ s/^::ffff://;
     $month += 1;
     $year += 1900;
-    printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-39s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
+    printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
     close LOG;
 }
 

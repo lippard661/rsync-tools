@@ -40,3 +40,4 @@
 	pledge.
 	rsync-altroot: remove bareword filehandles.
 	rsync-client: add comments on setup/cleanup unveiling, no code change.
+20 May 2026: rrsync: use original args in logging, no extra spaces after host/IP.

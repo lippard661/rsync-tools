@@ -53,6 +53,8 @@
 #    was exploitable under Linux/macOS). Remove hostname resolution
 #    on IP addresses (which doesn't support IPv6 anyway), remove
 #    unneeded 'dns' pledge.
+# Modified 19 May 2026 by Jim Lippard to remove padding on IP address
+#    in logging and log original args instead of slash-stripped ones.
 
 use strict;
 use warnings;
@@ -321,7 +323,7 @@ if (!$no_lock) {
 
 chdir($subdir) or die "$0: Unable to chdir to restricted dir: $!\n";
 
-my(@opts, @args);
+my(@opts, @args, @log_args);
 my $in_options = 1;
 my $last_opt = '';
 my $check_type;
@@ -364,6 +366,8 @@ while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
       die "$0: option $opt has been disabled on this server.\n";
     }
   } else {
+      # Save original args for logging.
+      push(@log_args, $_);
       # Validate args to ensure they don't try to leave our restricted dir.
       s#//+#/#g;
       s#^/##;
@@ -396,7 +400,7 @@ if ($write_log) {
     $host =~ s/^::ffff://;
     $month += 1;
     $year += 1900;
-    printf LOG "%04d-%02d-%02d %02d:%02d:%02d %-16s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
+    printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @log_args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
     close LOG;
 }
 

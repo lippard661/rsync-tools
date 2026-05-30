@@ -50,11 +50,14 @@
 # Modified 8 April 2026 by Jim Lippard to add "use warnings".
 # Modified 17 May 2026 by Jim Lippard to validate args after glob
 #    expansion instead of before (already mitigated on OpenBSD but
-#    was exploitable under Linux/macOS). Remove hostname resolution
-#    on IP addresses (which doesn't support IPv6 anyway), remove
-#    unneeded 'dns' pledge.
+#    was exploitable under Linux/macOS; issue identified by Gemini
+#    and confirmed by Claude, not present in python version)).
+#    Remove hostname resolution on IP addresses (which doesn't
+#    support IPv6 anyway), remove unneeded 'dns' pledge. Made minimal
+#    fix on vuln instead of Claude-suggested new validate_arg subroutine.
 # Modified 19 May 2026 by Jim Lippard to remove padding on IP address
 #    in logging and log original args instead of slash-stripped ones.
+# Modified 30 May 2026 by Jim Lippard to add missing 'dirs' long option.
 
 use strict;
 use warnings;
@@ -220,6 +223,7 @@ our %long_opt = (
   'delete-during' => 0,
   'delete-excluded' => 0,
   'delete-missing-args' => 0,
+  'dirs' => 0,
   'existing' => 0,
   'fake-super' => 0,
   'files-from' => 3,

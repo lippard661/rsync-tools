@@ -1,5 +1,7 @@
 BUGS:
 
+(Fixed 30 May 2026): rrsync: add missing 'dirs' long option.
+
 (Fixed 17 May 2026): rrsync: exploitable vulnerability in glob
 expansion order, removed hostname resolution for logging, removed
 'dns' pledge.

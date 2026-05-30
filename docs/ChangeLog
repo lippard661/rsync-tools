@@ -41,3 +41,5 @@
 	rsync-altroot: remove bareword filehandles.
 	rsync-client: add comments on setup/cleanup unveiling, no code change.
 20 May 2026: rrsync: use original args in logging, no extra spaces after host/IP.
+30 May 2026: rrsync: add missing 'dirs' long option (after comparing to python version
+	which fixed it in December 2025).

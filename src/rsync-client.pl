@@ -92,6 +92,8 @@
 #    the script, (5) multiple commands in setup/cleanup unveil
 #    "blind spot" based on false assumption that unveil environments
 #    are propagated over system calls. No actual issues to fix.
+# Modified 2026-05-31 by Jim Lippard to replace $RSYNC_IDENTITY constant with
+#    $rsync_identity variable.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -241,7 +243,6 @@ my $USE_SUDO = 0;
 my $RSYNC_USER = '_rsyncu';
 my $RSYNC_USER_HOME = "/home/$RSYNC_USER";
 my $RSYNC_USER_SSHDIR = "$RSYNC_USER_HOME/.ssh";
-my $RSYNC_IDENTITY = "$RSYNC_USER_SSHDIR/id_dsa";
 my $RSYNC_ED25519_IDENTITY = "$RSYNC_USER_SSHDIR/id_ed25519"; # preferred
 my $RSYNC_ECDSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_ecdsa";
 
@@ -300,7 +301,8 @@ my $VALIDATE_DIRLIST = 1;
 ### Variables.
 
 my ($push, $both, $other_host, $source, $destination,
-    @source_dirlist, @destination_dirlist, @rsync_options, $ssh_identity,
+    @source_dirlist, @destination_dirlist, @rsync_options, $rsync_identity,
+    $ssh_identity,
     @source_sudo, @destination_sudo,
     @source_setup, @source_cleanup, @dest_setup, @dest_cleanup,
     @setup_command, @cleanup_command, $idx);
@@ -604,24 +606,24 @@ sub parse_config {
 sub exec_client {
     if ($ssh_identity ne '') {
 	if (-e "$ssh_identity") {
-	    $RSYNC_IDENTITY = $ssh_identity;
+	    $rsync_identity = $ssh_identity;
 	}
 	else {
 	    die "Cannot find specified ssh-identity. $ssh_identity\n";
 	}
     }
     elsif (-e $RSYNC_ED25519_IDENTITY) {
-	$RSYNC_IDENTITY = $RSYNC_ED25519_IDENTITY;
+	$rsync_identity = $RSYNC_ED25519_IDENTITY;
     }
     elsif (-e $RSYNC_ECDSA_IDENTITY) {
-	$RSYNC_IDENTITY = $RSYNC_ECDSA_IDENTITY;
+	$rsync_identity = $RSYNC_ECDSA_IDENTITY;
     }
     else {
 	die "Cannot find .ssh/(ed25519 ecdsa)_id. RSA and DSA keys are no longer supported.\n"
     }
-    $ENV{'RSYNC_RSH'} = "$SSH -i $RSYNC_IDENTITY";
+    $ENV{'RSYNC_RSH'} = "$SSH -i $rsync_identity";
     if ($DEBUG) {
-	$ENV{'RSYNC_RSH'} = "$SSH -vv -i $RSYNC_IDENTITY";
+	$ENV{'RSYNC_RSH'} = "$SSH -vv -i $rsync_identity";
     }
 
     @rsync_command = ($RSYNC, '-avz');

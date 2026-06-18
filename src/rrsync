@@ -58,6 +58,9 @@
 # Modified 19 May 2026 by Jim Lippard to remove padding on IP address
 #    in logging and log original args instead of slash-stripped ones.
 # Modified 30 May 2026 by Jim Lippard to add missing 'dirs' long option.
+# Modified 16 June 2026 by Claude at the direction of Jim Lippard to
+#    maintain feature parity with python version by adding -absolute
+#    option.
 
 use strict;
 use warnings;
@@ -83,14 +86,14 @@ use constant LOCKFILE => '/home/_rsyncu/.rrsync.lock';
 use constant ZONEINFO_DIR => '/usr/share/zoneinfo';
 
 my $Usage = <<EOM;
-Usage: rrsync [-ro | -wo] [-munge] [-no-del] [-no-lock] [-no-overwrite] [-help] DIR
+Usage: rrsync [-ro | -wo] [-doas] [-absolute] [-munge] [-no-del] [-no-lock] [-no-overwrite] [-help] DIR
 Use 'command="$0 [options] DIR"'
 	in front of lines in $ENV{HOME}/.ssh/authorized_keys
 EOM
 
 # parse rrsync command line
 my $arg;
-our ($doas, $ro, $wo, $munge, $no_del, $no_lock, $no_overwrite, $subdir);
+our ($doas, $ro, $wo, $munge, $no_del, $no_lock, $no_overwrite, $absolute, $subdir);
 while (@ARGV) {
     $arg = shift;
     if ($arg eq '-doas') { # -doas = use doas
@@ -116,6 +119,9 @@ while (@ARGV) {
     elsif ($arg eq '-no-overwrite') { # -no-overwrite = set --ignore-existing
 	$no_overwrite = 1;
     }
+    elsif ($arg eq '-absolute') { # -absolute = allow transfer args to use absolute server paths under DIR
+	$absolute = 1;
+    }
     elsif ($arg eq '-help') { # -help = die with usage msg
 	die "$Usage\n";
     }
@@ -132,6 +138,8 @@ while (@ARGV) {
 die "$0: No subdirectory specified\n$Usage" unless defined $subdir;
 $subdir = abs_path($subdir);
 die "$0: Restricted directory does not exist!\n" if $subdir ne '/' && !-d $subdir;
+# Build the dir_slash equivalent after $subdir is established:
+my $subdir_slash = $subdir eq '/' ? '/' : "$subdir/";
 
 die "$0: -ro and -wo are mutually exclusive\n" if ($ro && $wo);
 
@@ -372,6 +380,11 @@ while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
   } else {
       # Save original args for logging.
       push(@log_args, $_);
+
+      # Detect if this is an absolute arg matching the restricted dir
+      my $is_absolute_arg = $absolute && $subdir ne '/' && 
+	  ($_ eq $subdir || index($_, $subdir_slash) == 0);
+      
       # Validate args to ensure they don't try to leave our restricted dir.
       s#//+#/#g;
       s#^/##;
@@ -384,11 +397,29 @@ while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
 if ($subdir ne '/') {
     foreach my $arg (@args) {
         die "Do not use .. in any path!\n" if $arg =~ m#(^|/)\.\.(/|$)#;
-        die "$0: arg not under subdir\n" unless abs_is_under($arg, $subdir);
+
+	# For absolute args, allow exact match of $subdir (where real_arg == $subdir)
+        # Otherwise require arg to be strictly under $subdir
+        unless (abs_is_under($arg, $subdir)) {
+            # Check if this is the absolute-arg exception (real path equals subdir)
+            my $real = abs_path($arg);
+            if (!($absolute && defined($real) && $real eq $subdir)) {
+                die "$0: arg not under subdir\n";
+            }
+        }
     }
 }
 
 die "$0: invalid rsync-command syntax or options\n" if $in_options;
+
+# After validation, convert exact-dir absolute args to "." (so rsync sees relative path):
+if ($absolute && $subdir ne '/') {
+    foreach my $arg (@args) {
+        # If arg resolves to exactly $subdir, change to "."
+        my $real = abs_path($arg);
+        $arg = '.' if (defined($real) && $real eq $subdir);
+    }
+}
 
 @args = ( '.' ) if !@args;
 

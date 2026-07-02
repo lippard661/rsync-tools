@@ -99,9 +99,7 @@
 #    option match, report unveil errors, add dest-sudo glob config check,
 #    improve option split to avoid leading space case. Left unfixed: system
 #    return codes not checked.
-#    Fix issue exposed by checking unveil errors: harmless EPERMs can occur
-#    with "both" unveiling where the same path (or a child/parent) are on
-#    both the push and pull paths.
+#    Fix issue exposed by checking unveil errors, when sudo is used.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -186,14 +184,17 @@
 # Consequence for do_unveil: source/dest path resolution in this script runs
 # as the unprivileged rsync user, BEFORE the elevated rsync is exec'd. For a
 # "sudo: yes" path, that user often cannot traverse into the (root/group-owned)
-# directory, so unveil fails. unveil reports such a path as ENOENT rather than
-# EACCES (by design, so it doesn't reveal what lies behind an inaccessible
-# directory), even when the directory exists. do_unveil therefore tolerates
-# ENOENT only when the entry is "sudo: yes"; the elevated rsync will access the
-# path, and unveil could not have meaningfully confined it here in any case.
-# Non-sudo paths remain strictly checked, so a genuine missing/mistyped path
-# in an unprivileged entry still aborts. EPERM is tolerated separately: it means
-# the path is already covered by an ancestor unveil (wider perm intentionally wins).
+# directory, so unveil fails -- even though the directory exists and the
+# elevated rsync will access it fine. unveil reports this inaccessibility as
+# either ENOENT or EPERM, never EACCES: ENOENT when a component of the path
+# can't be resolved (by design, so it doesn't reveal what lies behind an
+# inaccessible directory), EPERM when the path is unveilable but not accessible
+# to the unprivileged user. do_unveil therefore tolerates both errnos, but only
+# for "sudo: yes" paths; the elevated rsync provides the real access, and unveil
+# could not have restricted that path here in any case.
+# Thus do_unveil conditionally ignores ENOENT and EPERM for sudo/doas paths,
+# but raises them for non-sudo paths, where such a failure indicates a config
+# typo or a permissions problem that would cause the rsync to fail anyway.
 
 # Usage:
 #   On client side: 
@@ -934,13 +935,14 @@ sub exec_server {
 
 ### Utility subroutines.
 
-# Subroutine to do unveils with error checking while ignoring EPERM and ENOENT with sudo/doas.
+# Subroutine to do unveils with error checking while ignoring EPERM and ENOENT with sudo/doas
+# (the two ways unveil can fail on paths the unpriv process doesn't have access to).
 sub do_unveil {
     my ($path, $perm, $sudo) = @_;
     
     return 1 if unveil ($path, $perm);
     my $err = $!;                    # capture before it's clobbered
-    return 1 if $!{EPERM};           # already covered by an ancestor; wider perm stands
+    return 1 if $sudo && $!{EPERM};  # already covered by an ancestor; wider perm stands
     return 1 if $sudo && $!{ENOENT}; # sudo path _rsyncu can't resolve; elevated rsync will
     die "Cannot unveil $path ($perm): $err\n";
 }

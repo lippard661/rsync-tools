@@ -176,6 +176,24 @@
 # will need to permit the RSYNC_RSH environment variable to be passed by adding
 # a line to your sudoers file that says:
 #  Default:_rsyncu env_keep +="RSYNC_RSH"
+#
+# Note on pledge/unveil and doas/sudo:
+# pledge/unveil restrict rsync-client.pl itself, but they are NOT inherited
+# across the exec into a doas/sudo child -- that child starts without restrictions.
+# For a "sudo: yes" transfer the actual restriction is therefore provided by
+# sudo plus the sudoers command whitelist, not by unveil.
+#
+# Consequence for do_unveil: source/dest path resolution in this script runs
+# as the unprivileged rsync user, BEFORE the elevated rsync is exec'd. For a
+# "sudo: yes" path, that user often cannot traverse into the (root/group-owned)
+# directory, so unveil fails. unveil reports such a path as ENOENT rather than
+# EACCES (by design, so it doesn't reveal what lies behind an inaccessible
+# directory), even when the directory exists. do_unveil therefore tolerates
+# ENOENT only when the entry is "sudo: yes"; the elevated rsync will access the
+# path, and unveil could not have meaningfully confined it here in any case.
+# Non-sudo paths remain strictly checked, so a genuine missing/mistyped path
+# in an unprivileged entry still aborts. EPERM is tolerated separately: it means
+# the path is already covered by an ancestor unveil (wider perm intentionally wins).
 
 # Usage:
 #   On client side: 
@@ -910,13 +928,14 @@ sub exec_server {
 
 ### Utility subroutines.
 
-# Subroutine to do unveils with error checking while ignoring EPERM.
+# Subroutine to do unveils with error checking while ignoring EPERM and ENOENT with sudo/doas.
 sub do_unveil {
     my ($path, $perm) = @_;
     
     return 1 if unveil ($path, $perm);
     my $err = $!;                    # capture before it's clobbered
     return 1 if $!{EPERM};           # already covered by an ancestor; wider perm stands
+    return 1 if $sudo && $!{ENOENT}; # sudo path _rsyncu can't resolve; elevated rsync will
     die "Cannot unveil $path ($perm): $err\n";
 }
 

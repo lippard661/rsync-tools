@@ -428,6 +428,8 @@ my $ok = eval {
     }
 
     die "$0: invalid rsync-command syntax or options\n" if $in_options;
+
+    1;
 }; # eval to catch and log errors
 if (!$ok) {
     my $err = $@ || "unknown error";

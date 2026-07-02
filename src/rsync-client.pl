@@ -99,6 +99,9 @@
 #    option match, report unveil errors, add dest-sudo glob config check,
 #    improve option split to avoid leading space case. Left unfixed: system
 #    return codes not checked.
+#    Fix issue exposed by checking unveil errors: harmless EPERMs can occur
+#    with "both" unveiling where the same path (or a child/parent) are on
+#    both the push and pull paths.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -233,6 +236,7 @@
 
 use strict;
 use warnings;
+use Errno qw( EPERM ); # for do_unveil sub
 use Fcntl qw(:DEFAULT :flock); # for logging
 use File::Basename;
 use File::Glob ':glob';
@@ -668,11 +672,11 @@ sub exec_client {
 	foreach $path (@allowed_paths) {
 	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
 	    if ($push) {
-		unveil ($unveil_path, 'r') || die "Cannot unveil $unveil_path: $!\n";
+		do_unveil ($unveil_path, 'r');
 
 	    }
 	    else {
-		unveil ($unveil_path, 'rwc') || die "Cannot unveil $unveil_path: $!\n";
+		do_unveil ($unveil_path, 'rwc');
 	    }
 	}
 
@@ -689,7 +693,7 @@ sub exec_client {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
+		    do_unveil ($cmd_path, 'rx');
 		}
 	    }
 	}
@@ -698,7 +702,7 @@ sub exec_client {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
+		    do_unveil ($cmd_path, 'rx');
 		}
 	    }
 	}
@@ -789,10 +793,10 @@ sub exec_server {
 	foreach $path (@allowed_paths) {
 	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
 	    if ($push) {
-		unveil ($unveil_path, 'rwc') || die "Cannot unveil $unveil_path: $!\n";
+		do_unveil ($unveil_path, 'rwc');
 	    }
 	    else {
-		unveil ($unveil_path, 'r') || die "Cannot unveil $unveil_path: $!\n";
+		do_unveil ($unveil_path, 'r');
 	    }
 	}
 
@@ -801,7 +805,7 @@ sub exec_server {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
+		    do_unveil ($cmd_path, 'rx');
 		}
 	    }
 	}
@@ -810,7 +814,7 @@ sub exec_server {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
+		    do_unveil ($cmd_path, 'rx');
 		}
 	    }
 	}
@@ -905,6 +909,16 @@ sub exec_server {
 }
 
 ### Utility subroutines.
+
+# Subroutine to do unveils with error checking while ignoring EPERM.
+sub do_unveil {
+    my ($path, $perm) = @_;
+    
+    return 1 if unveil ($path, $perm);
+    my $err = $!;                    # capture before it's clobbered
+    return 1 if $!{EPERM};           # already covered by an ancestor; wider perm stands
+    die "Cannot unveil $path ($perm): $err\n";
+}
 
 # Subroutine to die with security error message and log it.
 sub security_die {

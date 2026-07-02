@@ -61,6 +61,9 @@
 # Modified 16 June 2026 by Claude at the direction of Jim Lippard to
 #    maintain feature parity with python version by adding -absolute
 #    option.
+# Modified 2 July 2026 by Jim Lippard after Claude Opus 4.8 review:
+#    Fix -absolute, fix comment typos, make exit return rsync exit code,
+#    add logging for all validation failures.
 
 use strict;
 use warnings;
@@ -137,7 +140,8 @@ while (@ARGV) {
 }
 die "$0: No subdirectory specified\n$Usage" unless defined $subdir;
 $subdir = abs_path($subdir);
-die "$0: Restricted directory does not exist!\n" if $subdir ne '/' && !-d $subdir;
+die "$0: Restricted directory does not exist!\n"
+    if !defined ($subdir) || ($subdir ne '/' && !-d $subdir);
 # Build the dir_slash equivalent after $subdir is established:
 my $subdir_slash = $subdir eq '/' ? '/' : "$subdir/";
 
@@ -149,7 +153,7 @@ die "$0: -ro and -wo are mutually exclusive\n" if ($ro && $wo);
 # command="rrsync logs/client" ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEAzGhEeNlPr...
 # command="rrsync -ro results" ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAIEAmkHG1WCjC...
 #
-# Format of the envrionment variables set by sshd:
+# Format of the environment variables set by sshd:
 # SSH_ORIGINAL_COMMAND=rsync --server          -vlogDtpr --partial . ARG # push
 # SSH_ORIGINAL_COMMAND=rsync --server --sender -vlogDtpr --partial . ARGS # pull
 # SSH_CONNECTION=client_addr client_port server_port
@@ -335,82 +339,108 @@ if (!$no_lock) {
 
 chdir($subdir) or die "$0: Unable to chdir to restricted dir: $!\n";
 
+# for logging, moved up here to allow eval to catch and log errors
+my $host = $ENV{SSH_CONNECTION} || 'unknown';
+$host =~ s/ .*//; # Keep only the client's IP addr
+$host =~ s/^::ffff://;
+
 my(@opts, @args, @log_args);
 my $in_options = 1;
 my $last_opt = '';
 my $check_type;
-while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
-  $_ = $1;
-  if ($check_type) {
-    push(@opts, check_arg($last_opt, $_, $check_type));
-    $check_type = 0;
-  } elsif ($in_options) {
-    push(@opts, $_);
-    if ($_ eq '.') {
-      $in_options = 0;
-    } else {
-      next if /^-(?=.)$short_no_arg*(e\d*\.\w*)?$/o || /^-$short_with_num\d+$/o;
 
-      my($opt,$arg) = /^--([^=]+)(?:=(.*))?$/;
-      my $disabled;
-      if (defined $opt) {
-	my $ct = $long_opt{$opt};
-	last unless defined $ct;
-	next if $ct == 0;
-	if ($ct > 0) {
-	  if (!defined $arg) {
-	    $check_type = $ct;
-	    $last_opt = $opt;
-	    next;
-	  }
-	  $arg = check_arg($opt, $arg, $ct);
-	  $opts[-1] =~ s/=.*/=$arg/;
-	  next;
-	}
-	$disabled = 1;
-	$opt = "--$opt";
-      } elsif ($short_disabled ne '') {
-	$disabled = /^-$short_no_arg*([$short_disabled])/o;
-	$opt = "-$1";
-      }
+# eval to catch and log errors
+my $ok = eval {
+    while ($command =~ /((?:[^\s\\]+|\\.[^\s\\]*)+)/g) {
+	$_ = $1;
+	if ($check_type) {
+	    push(@opts, check_arg($last_opt, $_, $check_type));
+	    $check_type = 0;
+	} elsif ($in_options) {
+	    push(@opts, $_);
+	    if ($_ eq '.') {
+		$in_options = 0;
+	    } else {
+		next if /^-(?=.)$short_no_arg*(e\d*\.\w*)?$/o || /^-$short_with_num\d+$/o;
 
-      last unless $disabled; # Generate generic failure
-      die "$0: option $opt has been disabled on this server.\n";
-    }
-  } else {
-      # Save original args for logging.
-      push(@log_args, $_);
+		my($opt,$arg) = /^--([^=]+)(?:=(.*))?$/;
+		my $disabled;
+		if (defined $opt) {
+		    my $ct = $long_opt{$opt};
+		    last unless defined $ct;
+		    next if $ct == 0;
+		    if ($ct > 0) {
+			if (!defined $arg) {
+			    $check_type = $ct;
+			    $last_opt = $opt;
+			    next;
+			}
+			$arg = check_arg($opt, $arg, $ct);
+			$opts[-1] =~ s/=.*/=$arg/;
+			next;
+		    }
+		    $disabled = 1;
+		    $opt = "--$opt";
+		} elsif ($short_disabled ne '') {
+		    $disabled = /^-$short_no_arg*([$short_disabled])/o;
+		    $opt = "-$1";
+		}
 
-      # Detect if this is an absolute arg matching the restricted dir
-      my $is_absolute_arg = $absolute && $subdir ne '/' && 
-	  ($_ eq $subdir || index($_, $subdir_slash) == 0);
+		last unless $disabled; # Generate generic failure
+		die "$0: option $opt has been disabled on this server.\n";
+	    }
+	} else {
+	    # Save original args for logging.
+	    push(@log_args, $_);
+
+	    # Detect if this is an absolute arg matching the restricted dir
+	    my $is_absolute_arg = $absolute && $subdir ne '/' && 
+		($_ eq $subdir || index($_, $subdir_slash) == 0);
       
-      # Validate args to ensure they don't try to leave our restricted dir.
-      s#//+#/#g;
-      s#^/##;
-      s#^$#.#;
-      push(@args, bsd_glob($_, GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE));
-  }
-}
-
-# Validate all args after any glob expansion.
-if ($subdir ne '/') {
-    foreach my $arg (@args) {
-        die "Do not use .. in any path!\n" if $arg =~ m#(^|/)\.\.(/|$)#;
-
-	# For absolute args, allow exact match of $subdir (where real_arg == $subdir)
-        # Otherwise require arg to be strictly under $subdir
-        unless (abs_is_under($arg, $subdir)) {
-            # Check if this is the absolute-arg exception (real path equals subdir)
-            my $real = abs_path($arg);
-            if (!($absolute && defined($real) && $real eq $subdir)) {
-                die "$0: arg not under subdir\n";
-            }
-        }
+	    # Validate args to ensure they don't try to leave our restricted dir.
+	    if ($is_absolute_arg) {
+		s#//+#/#g;          # collapse, but keep the leading slash
+	    }
+	    else {
+		s#//+#/#g;
+		s#^/##;
+		s#^$#.#;
+	    }
+	    push(@args, bsd_glob($_, GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE));
+	}
     }
-}
 
-die "$0: invalid rsync-command syntax or options\n" if $in_options;
+    # Validate all args after any glob expansion.
+    if ($subdir ne '/') {
+	foreach my $arg (@args) {
+	    die "Do not use .. in any path!\n" if $arg =~ m#(^|/)\.\.(/|$)#;
+
+	    # For absolute args, allow exact match of $subdir (where real_arg == $subdir)
+	    # Otherwise require arg to be strictly under $subdir
+	    unless (abs_is_under($arg, $subdir)) {
+		# Check if this is the absolute-arg exception (real path equals subdir)
+		my $real = abs_path($arg);
+		if (!($absolute && defined($real) && $real eq $subdir)) {
+		    die "$0: arg not under subdir\n";
+		}
+	    }
+	}
+    }
+
+    die "$0: invalid rsync-command syntax or options\n" if $in_options;
+}; # eval to catch and log errors
+if (!$ok) {
+    my $err = $@ || "unknown error";
+    chomp $err;
+    if ($write_log) {
+        my @t = (localtime)[0,1,2,3,4,5];
+        printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s DENIED: %s [%s]\n",
+            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0],
+            $host, $err, $ENV{SSH_ORIGINAL_COMMAND};
+        close LOG;
+    }
+    exit 1;
+}
 
 # After validation, convert exact-dir absolute args to "." (so rsync sees relative path):
 if ($absolute && $subdir ne '/') {
@@ -425,14 +455,11 @@ if ($absolute && $subdir ne '/') {
 
 # munge: add --munge-links
 push (@opts, '--munge-links') if ($munge);
-# no_overwrite: add --ignore-exising
+# no_overwrite: add --ignore-existing
 push (@opts, '--ignore-existing') if ($no_overwrite);
 
 if ($write_log) {
     my ($ss,$mm,$hh,$day,$month,$year) = (localtime)[0,1,2,3,4,5];
-    my $host = $ENV{SSH_CONNECTION} || 'unknown';
-    $host =~ s/ .*//; # Keep only the client's IP addr
-    $host =~ s/^::ffff://;
     $month += 1;
     $year += 1900;
     printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @log_args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
@@ -441,10 +468,10 @@ if ($write_log) {
 
 # Note: This assumes that the rsync protocol will not be maliciously hijacked.
 if ($doas) {
-    exit system(DOAS, RSYNC, @opts, '--', @args);
+    exit (system(DOAS, RSYNC, @opts, '--', @args) >> 8);
 }
 else {
-    exit system(RSYNC, @opts, '--', @args);
+    exit (system(RSYNC, @opts, '--', @args) >> 8);
 }
 
 sub abs_is_under {

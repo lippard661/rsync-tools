@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-# Script to rsync filesystems on mirror disk.
+# Script to rsync filesystems on mirror disk. Not suitable for Linux without modification.
 # 2002-01-26 Jim Lippard.
 # Modified 2006-03-07 by Jim Lippard to not copy root partition
 #   and to use separate partition for /usr/local.  Root partition
@@ -32,6 +32,10 @@
 # Modified 2026-04-08 by Jim Lippard to add "use warnings" and remove
 #    unneeded /etc special-casing.
 # Modified 2026-05-17 by Jim Lippard to not use bareword filehandles.
+# Modified 2026-07-01 by Jim Lippard after review by Claude Opus 4.8 to
+#    change dir check to existence check in the rsync so that kernels
+#    are rsynced, check that /altroot dirs are mounted before doing rsync,
+#    minor cleanup.
 
 # Old removed features (now using rsnapshot):
 # Regular rsyncs are from the original files to /altroot (daily),
@@ -48,6 +52,7 @@
 
 use strict;
 use warnings;
+use File::Basename qw( dirname );
 use Getopt::Long;
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";
@@ -122,7 +127,8 @@ if (!$mount && !$rsync && !$unmount) {
 }
 
 if ($#ARGV != -1) {
-    die "Usage: rsync-altroot.pl [-mrudwtb]\n--mount, --rsync, --unmount\n";
+    # no -d debug, -t target
+    die "Usage: rsync-altroot.pl [-mru]\n--mount, --rsync, --unmount\n";
 }
 
 $rsync_target = $ALTROOT;
@@ -145,7 +151,7 @@ my $fstab_fh;
 if (open ($fstab_fh, '<', $FSTAB)) {
     while (<$fstab_fh>) {
 	chomp;
-	if (/^[#]*([\S]+)\s+([\S]+)\s*/) {
+	if (/^[#]*\s*([\S]+)\s+([\S]+)\s*/) {
 	       $fstab{$2} = $1;
 	} #if
     } #while
@@ -167,17 +173,24 @@ if ($mount) {
 	    print "Mounting $device{$filesystem} on /altroot$filesystem\n";
 	    if (!$DEBUG) {
 		(system ($MOUNT, "$device{$filesystem}", "/altroot$filesystem") == 0)
-		    or die "Aborting due to error mounting $device{$filesystem} on /altroot/$filesystem. $?\n";
+		    or die "Aborting due to error mounting $device{$filesystem} on /altroot$filesystem. $?\n";
 	    }
 	}
     }
 }
 
 if ($rsync) {
-# This section code copies from the original directories, to either /altroot or /backup.
-# Root filesystem.
+    foreach $filesystem (@FILESYSTEMS) {
+        next unless defined ($device{$filesystem});
+        my $target = "/altroot$filesystem";
+        is_mounted ($target)
+            or die "Aborting: $target is not mounted (--delete would hit the root disk).\n"
+	    unless ($DEBUG);
+    }
+    # This section code copies from the original directories, to either /altroot or /backup.
+    # Root filesystem.
     foreach $directory (@ROOT_DIRS) {
-	if (-d $directory || $directory eq '') {
+	if (-e $directory) {
 	    print "rsync on $directory to $rsync_target\n";
 	    system ($RSYNC, '-avz', '--delete', $directory, $rsync_target) if (!$DEBUG);
 	}
@@ -201,4 +214,13 @@ if ($unmount) {
 		system ($UNMOUNT, "/altroot$filesystem") if (!$DEBUG);
 	    }
     }
+}
+
+### Subroutines.
+
+sub is_mounted {
+    my ($mp) = @_;
+    my $dev        = (stat ($mp))[0];
+    my $parent_dev = (stat (dirname ($mp)))[0];
+    return defined ($dev) && defined ($parent_dev) && $dev != $parent_dev;
 }

@@ -94,6 +94,11 @@
 #    are propagated over system calls. No actual issues to fix.
 # Modified 2026-05-31 by Jim Lippard to replace $RSYNC_IDENTITY constant with
 #    $rsync_identity variable.
+# Modified 2026-07-02 by Jim Lippard after Claude Opus 4.8 review:
+#    Fix undefined behavior issue with $unveil_path, use block mode grep in
+#    option match, report unveil errors, add dest-sudo glob config check,
+#    improve option split to avoid leading space case. Left unfixed: system
+#    return codes not checked.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -499,7 +504,7 @@ sub parse_config {
 			die "Configuration file does not have all required fields for entry with source $source and destination $destination.\n";
 		    }
 		    else {
-			die "Configuration file does not have all required fields for antry with source $source and no destination.\n";
+			die "Configuration file does not have all required fields for entry with source $source and no destination.\n";
 		    }
 		}
 		die "Configuration file does not have all required fields for an entry with no source or destination.\n";
@@ -538,6 +543,16 @@ sub parse_config {
 			die "Configuration error: source-dirlist entry \"$source_dirlist[$idx]\" contains glob pattern (*) but source-sudo is 'yes'.\n" .
 			    "Glob expansion happens before privilege escalation, so the directory must be readable by $RSYNC_USER.\n" .
 			    "Either: (1) make directory readable by $RSYNC_USER and set source-sudo to 'no', or (2) use explicit file paths instead of globs.\n";
+		    }
+		}
+	    }
+	    # Ditto for destination.
+	    if ($have_destination_sudo) {
+		for (my $idx = 0; $idx <= $#destination_dirlist; $idx++) {
+		    if ($destination_sudo[$idx] eq 'yes' && $destination_dirlist[$idx] =~ /\*/) {
+			die "Configuration error: destination-dirlist entry \"$destination_dirlist[$idx]\" contains glob pattern (*) but destination-sudo is 'yes'.\n" .
+			    "Glob expansion happens before privilege escalation, so the directory must be readable by $RSYNC_USER.\n" .
+			    "Either: (1) make directory readable by $RSYNC_USER and set destination-sudo to 'no', or (2) use explicit file paths instead of globs.\n";
 		    }
 		}
 	    }
@@ -651,31 +666,30 @@ sub exec_client {
 
 	# Unveil dir paths.
 	foreach $path (@allowed_paths) {
-	    my $unveil_path = dirname ($path) if ($path !~ /\/$/);
-	    $unveil_path //= $path;
+	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
 	    if ($push) {
-		unveil ($unveil_path, 'r');
+		unveil ($unveil_path, 'r') || die "Cannot unveil $unveil_path: $!\n";
 
 	    }
 	    else {
-		unveil ($unveil_path, 'rwc');	
+		unveil ($unveil_path, 'rwc') || die "Cannot unveil $unveil_path: $!\n";
 	    }
 	}
 
 	# Unveil commands.
-	unveil ($RSYNC, 'rx');
-	unveil ($SSH, 'rx');
-	unveil ($RSYNC_USER_SSHDIR, 'r');
-	unveil ($CONFIG_FILE, 'r');
-	unveil ($LOG_FILE, 'rwc');
-	unveil ($ZONEINFO_DIR, 'r');
+	unveil ($RSYNC, 'rx') || die "Cannot unveil $RSYNC: $!\n";
+	unveil ($SSH, 'rx') || die "Cannot unveil $SSH: $!\n";
+	unveil ($RSYNC_USER_SSHDIR, 'r') || die "Cannot unveil $RSYNC_USER_SSHDIR: $!\n";
+	unveil ($CONFIG_FILE, 'r') || die "Cannot unveil $CONFIG_FILE: $!\n";
+	unveil ($LOG_FILE, 'rwc') || die "Cannot unveil $LOG_FILE: $!\n";
+	unveil ($ZONEINFO_DIR, 'r') || die "Cannot unveil $ZONEINFO_DIR: $!\n";
 
 	foreach $command (@setup_command) {
 	    if ($command) {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx');
+		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
 		}
 	    }
 	}
@@ -684,24 +698,26 @@ sub exec_client {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx');
+		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
 		}
 	    }
 	}
 	
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
-	    unveil ($SUDO, 'rx');
+	    unveil ($SUDO, 'rx') || die "Cannot unveil $SUDO: $!\n";
 	}
 	else {
-	    unveil ($DOAS, 'rx');
+	    unveil ($DOAS, 'rx') || die "Cannot unveil $DOAS: $!\n";
 	}
 
 	# If both, only lock down AFTER the pull has completed, since
 	# pull requires more access on client side. (This could also be
 	# a bit better by intentionally removing unneeded paths after
 	# the pull is complete.)
-	unveil () if (!$both || $push);
+	if (!$both || $push) {
+	    unveil () || die "Cannot lock unveil: $!\n";
+	}
     }
 
     for ($idx = 0; $idx <= $#source_dirlist; $idx++) {
@@ -728,7 +744,7 @@ sub exec_client {
 	
 	if ($rsync_options[$idx]) {
 	    print "@this_command $rsync_options[$idx] @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    system (@this_command, split (/\s+/, $rsync_options[$idx]), @sources, "$destination_info$destination_dirlist[$idx]");
+	    system (@this_command, split (' ', $rsync_options[$idx]), @sources, "$destination_info$destination_dirlist[$idx]");
 	}
 	else {
 	    print "@this_command @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
@@ -766,18 +782,17 @@ sub exec_server {
 
 	pledge ('rpath' , 'wpath', 'cpath', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";;
 
-	unveil ($RSYNC, 'rx');
-	unveil ($CONFIG_FILE, 'r');
-	unveil ($LOG_FILE, 'rwc');
-	unveil ($ZONEINFO_DIR, 'r');
+	unveil ($RSYNC, 'rx') || die "Cannot unveil $RSYNC: $!\n";
+	unveil ($CONFIG_FILE, 'r') || die "Cannot unveil $CONFIG_FILE: $!\n";
+	unveil ($LOG_FILE, 'rwc') || die "Cannot unveil $LOG_FILE: $!\n";
+	unveil ($ZONEINFO_DIR, 'r') || die "Cannot unveil $ZONEINFO_DIR: $!\n";
 	foreach $path (@allowed_paths) {
-	    my $unveil_path = dirname ($path) if ($path !~ /\/$/);
-	    $unveil_path //= $path;
+	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
 	    if ($push) {
-		unveil ($unveil_path, 'rwc');
+		unveil ($unveil_path, 'rwc') || die "Cannot unveil $unveil_path: $!\n";
 	    }
 	    else {
-		unveil ($unveil_path, 'r');
+		unveil ($unveil_path, 'r') || die "Cannot unveil $unveil_path: $!\n";
 	    }
 	}
 
@@ -786,7 +801,7 @@ sub exec_server {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx');
+		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
 		}
 	    }
 	}
@@ -795,20 +810,20 @@ sub exec_server {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    unveil ($cmd_path, 'rx');
+		    unveil ($cmd_path, 'rx') || die "Cannot unveil $cmd_path: $!\n";
 		}
 	    }
 	}
 
 	# Would be better to check for need first.
 	if ($USE_SUDO) {
-	    unveil ($SUDO, 'rx');
+	    unveil ($SUDO, 'rx') || die "Cannot unveil $SUDO: $!\n";
 	}
 	else {
-	    unveil ($DOAS, 'rx');
+	    unveil ($DOAS, 'rx') || die "Cannot unveil $DOAS: $!\n";
 	}
 
-	unveil ();
+	unveil () || die "Cannot lock unveil: $!\n";
     }
 
     $command = $ENV{'SSH_ORIGINAL_COMMAND'};
@@ -855,7 +870,7 @@ sub exec_server {
 			: ($path);
 		    
 		    print $LOG "$time Command issued: @this_command @allowed_prefix $options . @paths\n";
-		    system (@this_command, @allowed_prefix, split (/\s+/, $options), '.', @paths);
+		    system (@this_command, @allowed_prefix, split (' ', $options), '.', @paths);
 		    print $LOG "$time Command executed: @this_command @allowed_prefix $options . @paths\n";
 
 		    if ($cleanup_command[$idx]) {
@@ -989,7 +1004,7 @@ sub validate_config_file_security {
 
 }
 
-# Subrouting to open log file and create with 0600 permissions.
+# Subroutine to open log file and create with 0600 permissions.
 sub open_log_file_secure {
     my $log_fh;
     # Create with 0600 permissions (rw-------)
@@ -1125,7 +1140,7 @@ sub server_options_match {
     push (@split_avail_options, &optionlist ($avail_options)) if (defined ($avail_options));
 
     foreach $option (@split_supplied_options) {
-	if (!grep (/^$option$/, @split_avail_options)) {
+	if (!grep { $_ eq $option } @split_avail_options) {
 	    print $log_fh "$time Disallowed individual option: $option\n";
 	    return 0;
 	}

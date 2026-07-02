@@ -254,7 +254,7 @@
 
 use strict;
 use warnings;
-use Errno qw( EPERM ); # for do_unveil sub
+use Errno qw( ENOENT EPERM ); # for do_unveil sub
 use Fcntl qw(:DEFAULT :flock); # for logging
 use File::Basename;
 use File::Glob ':glob';
@@ -687,14 +687,17 @@ sub exec_client {
 	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'proc') || die "Cannot pledge promises. $!\n";
 
 	# Unveil dir paths.
-	foreach $path (@allowed_paths) {
+	my @sudo_for_paths = $push ? @source_sudo : @destination_sudo;
+	for (my $idx = 0; $idx <= $#allowed_paths; $idx++) {
+	    my $path = $allowed_paths[$idx];
 	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
+	    my $sudo = ($sudo_for_paths[$idx] ? 1 : 0);
 	    if ($push) {
-		do_unveil ($unveil_path, 'r');
+		do_unveil ($unveil_path, 'r', $sudo);
 
 	    }
 	    else {
-		do_unveil ($unveil_path, 'rwc');
+		do_unveil ($unveil_path, 'rwc', $sudo);
 	    }
 	}
 
@@ -711,7 +714,7 @@ sub exec_client {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    do_unveil ($cmd_path, 'rx');
+		    do_unveil ($cmd_path, 'rx', 0);
 		}
 	    }
 	}
@@ -720,7 +723,7 @@ sub exec_client {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    do_unveil ($cmd_path, 'rx');
+		    do_unveil ($cmd_path, 'rx', 0);
 		}
 	    }
 	}
@@ -808,13 +811,16 @@ sub exec_server {
 	unveil ($CONFIG_FILE, 'r') || die "Cannot unveil $CONFIG_FILE: $!\n";
 	unveil ($LOG_FILE, 'rwc') || die "Cannot unveil $LOG_FILE: $!\n";
 	unveil ($ZONEINFO_DIR, 'r') || die "Cannot unveil $ZONEINFO_DIR: $!\n";
-	foreach $path (@allowed_paths) {
+	my @sudo_for_paths = $push ? @destination_sudo : @source_sudo;
+	for (my $idx = 0; $idx <= $#allowed_paths; $idx++) {
+	    my $path = $allowed_paths[$idx];
 	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
+	    my $sudo = ($sudo_for_paths[$idx] ? 1 : 0);
 	    if ($push) {
-		do_unveil ($unveil_path, 'rwc');
+		do_unveil ($unveil_path, 'rwc', $sudo);
 	    }
 	    else {
-		do_unveil ($unveil_path, 'r');
+		do_unveil ($unveil_path, 'r', $sudo);
 	    }
 	}
 
@@ -823,7 +829,7 @@ sub exec_server {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    do_unveil ($cmd_path, 'rx');
+		    do_unveil ($cmd_path, 'rx', 0);
 		}
 	    }
 	}
@@ -832,7 +838,7 @@ sub exec_server {
 		foreach my $cmd (split(/\s*;\s*/, $command)) {
 		    my $cmd_path = $cmd;
 		    $cmd_path =~ s/^(\S+).*$/$1/;
-		    do_unveil ($cmd_path, 'rx');
+		    do_unveil ($cmd_path, 'rx', 0);
 		}
 	    }
 	}
@@ -930,7 +936,7 @@ sub exec_server {
 
 # Subroutine to do unveils with error checking while ignoring EPERM and ENOENT with sudo/doas.
 sub do_unveil {
-    my ($path, $perm) = @_;
+    my ($path, $perm, $sudo) = @_;
     
     return 1 if unveil ($path, $perm);
     my $err = $!;                    # capture before it's clobbered

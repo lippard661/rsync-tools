@@ -100,6 +100,10 @@
 #    improve option split to avoid leading space case. Left unfixed: system
 #    return codes not checked.
 #    Fix issue exposed by checking unveil errors, when sudo is used.
+# Modified 2026-08-02 by Jim Lippard to update sudo locations
+#    for OpenBSD (default), Linux, and macOS and now update rsync
+#    location for macOS. Set $RSYNC_USER_HOME from getpwname (since
+#    macOS uses /Users).
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -269,7 +273,7 @@ my $DEBUG = 0;
 my $USE_SUDO = 0;
 
 my $RSYNC_USER = '_rsyncu';
-my $RSYNC_USER_HOME = "/home/$RSYNC_USER";
+my $RSYNC_USER_HOME = (getpwnam($RSYNC_USER))[7] || "/home/$RSYNC_USER";
 my $RSYNC_USER_SSHDIR = "$RSYNC_USER_HOME/.ssh";
 my $RSYNC_ED25519_IDENTITY = "$RSYNC_USER_SSHDIR/id_ed25519"; # preferred
 my $RSYNC_ECDSA_IDENTITY = "$RSYNC_USER_SSHDIR/id_ecdsa";
@@ -279,8 +283,10 @@ my $LOG_FILE = "$RSYNC_USER_HOME/rsync.out";
 
 my $DOAS = '/usr/bin/doas';
 my $RSYNC = '/usr/local/bin/rsync';
-$RSYNC = '/usr/bin/rsync' if ($^O eq 'linux');
+$RSYNC = '/usr/bin/rsync' if ($^O eq 'linux' || $^O eq 'darwin');
+$RSYNC = '/opt/homebrew/bin/rsync' if ($^O eq 'darwin' && -e '/opt/homebrew/bin/rsync');
 my $SUDO = '/usr/bin/sudo';
+$SUDO = '/usr/local/bin/sudo' if ($^O eq 'openbsd'); # now a port and doas is preferred for OpenBSD
 my $SSH = '/usr/bin/ssh';
 my $ZONEINFO_DIR = '/usr/share/zoneinfo';
 

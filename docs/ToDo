@@ -1,5 +1,10 @@
 BUGS:
 
+(Fixed 2 August 2026): rsync-client: Improve Linux/macOS portability.
+       Main issues were rsync command path and _rsync user home dir
+       for macOS and no-longer-correct default location for sudo on
+       OpenBSD. (rsync-altroot not updated for macOS since macOS has
+       no /etc/fstab by default.)
 (Fixed 2 July 2026): rsync-altroot: properly sync root files, ensure
        /altroot is mounted.
    rrsync: fix -absolute, log all validation failures, properly return

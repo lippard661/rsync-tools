@@ -54,3 +54,4 @@
         mode grep in option match, report unveil errors, add dest-sudo glob config
 	check, improve option split to avoid leading space case. Left unfixed: system
 	return codes not checked.
+8 August 2026: rsync-client.pl: Improve portability for macOS and Linux.

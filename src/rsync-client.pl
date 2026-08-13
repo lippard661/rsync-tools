@@ -104,6 +104,9 @@
 #    for OpenBSD (default), Linux, and macOS and now update rsync
 #    location for macOS. Set $RSYNC_USER_HOME from getpwname (since
 #    macOS uses /Users).
+# Mdodified 2026-08-13 by Jim Lippard to inject --confine-root=<dir> into
+#    rsync options by default, if the config doesn't already specify it,
+#    for rsync versions >3.5.0.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing
@@ -268,6 +271,10 @@ use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";
 
 ### Global constants.
+
+# Set to 1 on hosts still running rsync < 3.5.0 -- disables --confine-root
+# injection, which do not exist before 3.5.0. On an all-3.5.0 fleet, leave at 0.
+use constant RSYNC_PRE35 => 0;
 
 my $DEBUG = 0;
 my $USE_SUDO = 0;
@@ -903,10 +910,21 @@ sub exec_server {
 		    my @paths = ($path =~ /\*/)
 			? bsd_glob($path, GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE)
 			: ($path);
-		    
-		    print $LOG "$time Command issued: @this_command @allowed_prefix $options . @paths\n";
-		    system (@this_command, @allowed_prefix, split (' ', $options), '.', @paths);
-		    print $LOG "$time Command executed: @this_command @allowed_prefix $options . @paths\n";
+
+		    # Confinement root for this transfer: the directory rsync resolves within.
+		    # Same derivation as the unveil path -- the dir itself for a trailing-slash
+		    # entry, else the parent of the file/glob pattern. Computed from the pre-glob
+		    # $path so a glob confines to its containing directory, not an expanded leaf.
+		    my $confine_root = ($path =~ m{/$}) ? $path : dirname($path);
+
+		    my @confine = ();
+		    unless (RSYNC_PRE35 || $confine_root eq '/') {
+			@confine = ('--confine-root=' . $confine_root);
+		    }
+
+		    print $LOG "$time Command issued: @this_command @allowed_prefix @confine $options . @paths\n";
+		    system (@this_command, @allowed_prefix, @confine, split (' ', $options), '.', @paths);
+		    print $LOG "$time Command executed: @this_command @allowed_prefix @confine $options . @paths\n";
 
 		    if ($cleanup_command[$idx]) {
 			print $LOG "$time Cleanup command: $cleanup_command[$idx]\n";

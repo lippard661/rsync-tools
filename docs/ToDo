@@ -1,5 +1,12 @@
 BUGS:
 
+(Fixed 13 August 2026): rrsync: Support rsync-3.5.0+ by default (with
+       constant to modify for pre-3.5.0), and add python rrsync features
+       minus a fix for the TOCTOU mitigation on path resolution that is
+       not possible except on Linux and now a divergence between the perl
+       and python versions. If you're using Linux you should use the python
+       version if you think your use cases could run afoul of this issue in
+       your threat model.
 (Fixed 2 August 2026): rsync-client: Improve Linux/macOS portability.
        Main issues were rsync command path and _rsync user home dir
        for macOS and no-longer-correct default location for sudo on
@@ -42,6 +49,10 @@ for the containing dir of dirpath doesn't end with a /.  The
 dirlist function could stand to do some validation.
 
 FEATURES TO ADD:
+
+(Done 13 August 2026): rsync-server.pl: inject --confine-root settings
+on server side for rsync versions 3.5.0+ (on by default, turned off
+by change of constant value in code).
 
 (Done 18 June 2026) Add -absolute option to rrsync.
 

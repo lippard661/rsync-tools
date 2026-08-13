@@ -64,13 +64,50 @@
 # Modified 2 July 2026 by Jim Lippard after Claude Opus 4.8 review:
 #    Fix -absolute, fix comment typos, make exit return rsync exit code,
 #    add logging for all validation failures.
+# Modified 13 August 2026 by Claude at the direction of Jim Lippard to add
+#   rsync 3.5.0 portable hardening: --confine-root and --drop-D (gated on the
+#   RSYNC_PRE35 constant for pre-3.5 hosts), disable peer-selected --debug,
+#   pass the --files-from stdin sentinel and refuse a remote --files-from in
+#   -wo mode, disable backup-dir/partial-dir/delay-updates/log-file and short
+#   -b under -no-overwrite, and open the log file with O_NOFOLLOW. Documented
+#   why the Linux-only /proc-fd TOCTOU pin is not ported.
+#
+# NOTE on the rsync 3.5.0 realpath/TOCTOU hardening and why it is not ported:
+#   The python 3.5.0 rrsync closes a time-of-check/time-of-use window between
+#   its realpath() validation of a path and rsync's later resolution of the
+#   same path, by inode-pinning each validated path via /proc/self/fd/N and
+#   handing rsync the pinned fd. That primitive is Linux-only.
+#
+#   This perl version DOES resolve peer paths itself, for BOTH transfer args
+#   (abs_is_under) and checked option paths (check_arg: --temp-dir,
+#   --backup-dir, --partial-dir, --compare-dest/--copy-dest/--link-dest,
+#   --files-from), so the same window exists here -- and it is NOT mitigated by
+#   unveil. pledge/unveil are not inherited across the exec (there is no
+#   execpromises in the perl interface), so the rsync this script execs -- via
+#   system(RSYNC,...) or system(DOAS,RSYNC,...) alike -- starts with a clean
+#   slate and full filesystem access. unveil here confines only THIS script's
+#   own pre-exec activity (its abs_path checks, glob expansion, log/lock opens),
+#   not the transfer. There is no OpenBSD equivalent of the /proc-fd pin, so on
+#   OpenBSD this window is simply open; the exposure is a symlink/rename race by
+#   a local user with write access inside the restricted tree, between this
+#   script's validation and rsync's resolution.
+#
+#   Filter/dir-merge file paths are a related but distinct case: they travel
+#   over the protocol rather than in argv, are never seen by this script's
+#   validation at all, and are opened by the unconfined rsync. --confine-root
+#   (added below, 3.5.0+) is the only thing that bounds the server's resolution
+#   of them, on every platform.
+#
+#   If the realpath/exec window matters for a given host, run the stock python
+#   3.5.0 rrsync on Linux (where the pin applies); on OpenBSD it cannot
+#   currently be closed in this script.
 
 use strict;
 use warnings;
 
 use Cwd 'abs_path';
 use File::Glob ':glob';
-use Fcntl ':flock';
+use Fcntl qw(:flock :DEFAULT O_NOFOLLOW);
 
 use if $^O eq "openbsd", "OpenBSD::Pledge";
 use if $^O eq "openbsd", "OpenBSD::Unveil";
@@ -87,6 +124,10 @@ use constant DOAS => '/usr/bin/doas';
 use constant LOGFILE => '/home/_rsyncu/rrsync.log';
 use constant LOCKFILE => '/home/_rsyncu/.rrsync.lock';
 use constant ZONEINFO_DIR => '/usr/share/zoneinfo';
+
+# Set to 1 on hosts still running rsync < 3.5.0 -- disables --confine-root and
+# --drop-D, which do not exist before 3.5.0. On an all-3.5.0 fleet, leave at 0.
+use constant RSYNC_PRE35 => 0;
 
 my $Usage = <<EOM;
 Usage: rrsync [-ro | -wo] [-doas] [-absolute] [-munge] [-no-del] [-no-lock] [-no-overwrite] [-help] DIR
@@ -226,7 +267,7 @@ our %long_opt = (
   'copy-devices' => -1,
   'copy-unsafe-links' => 0,
   'daemon' => -1,
-  'debug' => 1,
+  'debug' => -1,
   'delay-updates' => 0,
   'delete' => 0,
   'delete-after' => 0,
@@ -313,6 +354,18 @@ if ($subdir ne '/') {
     $long_opt{'copy-unsafe-links'} = -1;
     $long_opt{'no-implied-dirs'} = -1;
 }
+if ($no_overwrite) {
+    # --ignore-existing (added before exec) guards only the live transfer
+    # destination. These options can still append to, move, or delete OTHER
+    # existing objects in the restricted dir -- backup publishing deletes what a
+    # name already holds, and --delete backs files up too -- so disable them in
+    # no-overwrite mode. Must precede the $short_disabled regex build below.
+    $long_opt{'backup-dir'}    = -1;
+    $long_opt{'partial-dir'}   = -1;
+    $long_opt{'delay-updates'} = -1;
+    $long_opt{'log-file'}      = -1;
+    $short_disabled .= 'b';
+}
 if ($short_disabled ne '') {
     $short_no_arg =~ s/[$short_disabled]//go;
     $short_with_num =~ s/[$short_disabled]//go;
@@ -330,7 +383,7 @@ if ($no_del) {
     }
 }
 
-my $write_log = -f LOGFILE && open(LOG, '>>', LOGFILE);
+my $write_log = safe_open_logfile();
 
 if (!$no_lock) {
     open (LOCK_FH, '>>', LOCKFILE) or die "open lockfile: $!";
@@ -460,6 +513,21 @@ push (@opts, '--munge-links') if ($munge);
 # no_overwrite: add --ignore-existing
 push (@opts, '--ignore-existing') if ($no_overwrite);
 
+# rsync 3.5.0 portable hardening (skipped on pre-3.5 hosts, where these flags
+# do not exist). Both matter on EVERY platform: the exec'd rsync does not
+# inherit this script's pledge/unveil, so nothing else confines the classes
+# they cover.
+unless (RSYNC_PRE35) {
+    # Filter/dir-merge file paths travel over the protocol, are never seen by
+    # this script's argv validation, and are opened by the unconfined rsync.
+    # --confine-root is the only thing bounding the server's resolution of
+    # them. Both directions. cwd is $subdir after the chdir above.
+    push (@opts, '--confine-root=' . $subdir) if ($subdir ne '/');
+    # Device/special creation by the receiving rsync is likewise unconfined;
+    # --drop-D denies it without the file-list rdev desync that --no-D causes.
+    push (@opts, '--drop-D') if ($subdir ne '/' && !$am_sender);
+}
+
 if ($write_log) {
     my ($ss,$mm,$hh,$day,$month,$year) = (localtime)[0,1,2,3,4,5];
     $month += 1;
@@ -490,15 +558,31 @@ sub abs_is_under {
 
 sub check_arg
 {
-  my($opt, $arg, $type) = @_;
-  $arg =~ s/\\(.)/$1/g;
-  if ($subdir ne '/' && ($type == 3 || ($type == 2 && !$am_sender))) {
-    $arg =~ s#//#/#g;
-    die "Do not use .. in --$opt; anchor the path at the root of your restricted dir.\n"
-      if $arg =~ m#(^|/)\.\.(/|$)#;
-    $arg =~ s#^/#$subdir/#;
-    die "--$opt value outside restricted dir.\n"
-	unless abs_is_under($arg, $subdir);
-  }
-  $arg;
+    my($opt, $arg, $type) = @_;
+    if ($opt eq 'files-from') {
+	return $arg if $arg eq '-';        # stdin sentinel, not a pathname
+	die "$0: a write-only server cannot read a remote --files-from path\n" if $wo;
+    }
+    $arg =~ s/\\(.)/$1/g;
+    if ($subdir ne '/' && ($type == 3 || ($type == 2 && !$am_sender))) {
+	$arg =~ s#//#/#g;
+	die "Do not use .. in --$opt; anchor the path at the root of your restricted dir.\n"
+	    if $arg =~ m#(^|/)\.\.(/|$)#;
+	$arg =~ s#^/#$subdir/#;
+	die "--$opt value outside restricted dir.\n"
+	    unless abs_is_under($arg, $subdir);
+    }
+    $arg;
+}
+
+sub safe_open_logfile {
+    my @st = lstat(LOGFILE);
+    return 0 unless @st && -f _;      # must already exist as a regular file
+    sysopen(LOG, LOGFILE, O_WRONLY | O_APPEND | O_NOFOLLOW) or return 0;
+    my @st2 = stat(LOG);
+    unless (@st2 && -f _ && $st[0] == $st2[0] && $st[1] == $st2[1]) {
+        close LOG;                    # symlink-swapped between lstat and open
+        return 0;
+    }
+    return 1;
 }

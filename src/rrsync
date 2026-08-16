@@ -72,35 +72,31 @@
 #   -b under -no-overwrite, and open the log file with O_NOFOLLOW. Documented
 #   why the Linux-only /proc-fd TOCTOU pin is not ported.
 #
-# NOTE on the rsync 3.5.0 realpath/TOCTOU hardening and why it is not ported:
-#   The python 3.5.0 rrsync closes a time-of-check/time-of-use window between
-#   its realpath() validation of a path and rsync's later resolution of the
-#   same path, by inode-pinning each validated path via /proc/self/fd/N and
-#   handing rsync the pinned fd. That primitive is Linux-only.
+# NOTE: rsync 3.5.0 portable hardening (skipped on pre-3.5 hosts, where these flags
+# do not exist). Both matter on EVERY platform: the exec'd rsync does not
+# inherit this script's pledge/unveil, so nothing else confines the classes
+# they cover.
 #
-#   This perl version DOES resolve peer paths itself, for BOTH transfer args
-#   (abs_is_under) and checked option paths (check_arg: --temp-dir,
-#   --backup-dir, --partial-dir, --compare-dest/--copy-dest/--link-dest,
-#   --files-from), so the same window exists here -- and it is NOT mitigated by
-#   unveil. pledge/unveil are not inherited across the exec (there is no
-#   execpromises in the perl interface), so the rsync this script execs -- via
-#   system(RSYNC,...) or system(DOAS,RSYNC,...) alike -- starts with a clean
-#   slate and full filesystem access. unveil here confines only THIS script's
-#   own pre-exec activity (its abs_path checks, glob expansion, log/lock opens),
-#   not the transfer. There is no OpenBSD equivalent of the /proc-fd pin, so on
-#   OpenBSD this window is simply open; the exposure is a symlink/rename race by
-#   a local user with write access inside the restricted tree, between this
-#   script's validation and rsync's resolution.
-#
-#   Filter/dir-merge file paths are a related but distinct case: they travel
-#   over the protocol rather than in argv, are never seen by this script's
-#   validation at all, and are opened by the unconfined rsync. --confine-root
-#   (added below, 3.5.0+) is the only thing that bounds the server's resolution
-#   of them, on every platform.
-#
-#   If the realpath/exec window matters for a given host, run the stock python
-#   3.5.0 rrsync on Linux (where the pin applies); on OpenBSD it cannot
-#   currently be closed in this script.
+# --confine-root does double duty, closing two distinct 3.5.0 CVE classes that
+# this script's own argv validation cannot fully reach:
+#   1. Filter/dir-merge file paths (--filter, per-directory merges, -C
+#      .cvsignore) travel over the protocol, not in argv, so they are never
+#      seen by check_arg or the transfer-arg validation at all. An exclude-only
+#      merge naming a file outside the restricted dir leaks that file's content
+#      by which of the peer's own names go missing from the file list
+#      (CVE-2026-53783's merge-open route). A daemon gets this confinement from
+#      its module root; a wrapped rsync gets it only from --confine-root.
+#   2. Absolute option paths -- --temp-dir, --link-dest, --partial-dir,
+#      --backup-dir, --compare-dest, --copy-dest. check_arg anchors a leading
+#      slash under the restricted dir and runs abs_is_under, but that is the
+#      same realpath-then-exec pattern with the same TOCTOU window this script
+#      cannot close (see the pledge/unveil note above). In 3.5.0 the rsync
+#      binary confines its OWN resolution of these paths (CVE-2026-53795,
+#      -70460); --confine-root is what backstops the wrapper's check-to-exec
+#      gap so a raced parent-symlink flip on one of these option paths cannot
+#      escape the restricted dir.
+# So check_arg's per-option anchoring is the first line, and --confine-root is
+# the backstop that makes it robust; neither alone is the whole story.
 
 use strict;
 use warnings;

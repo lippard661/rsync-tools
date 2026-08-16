@@ -107,6 +107,24 @@
 # Mdodified 2026-08-13 by Jim Lippard to inject --confine-root=<dir> into
 #    rsync options by default, if the config doesn't already specify it,
 #    for rsync versions >3.5.0.
+#
+# NOTE:
+# rsync 3.5.0 portable hardening (skipped on pre-3.5 hosts). The exec'd rsync
+# (sudo/doas or direct) does not inherit this script's unveil, so --confine-root
+# is the only in-script confinement of the transfer's own path resolution.
+#
+# It closes two 3.5.0 CVE classes that this script's exact-path allow-list
+# never sees, because both bypass argv:
+#   1. Filter/dir-merge file paths travel over the protocol, not in the matched
+#      command, so server_options_match cannot inspect them. An exclude-only
+#      merge naming an out-of-tree file leaks its content (CVE-2026-53783
+#      merge-open route). A daemon confines this via its module root; this
+#      wrapper confines it via --confine-root set to the matched path's dir.
+#   2. Absolute option paths (--temp-dir, --link-dest, --partial-dir,
+#      --backup-dir, etc.): in 3.5.0 the rsync binary confines its own
+#      resolution of these (CVE-2026-53795, -70460), and --confine-root ensures
+#      that confinement is anchored at THIS transfer's restricted directory
+#      rather than left to rsync's default.
 
 # To Do:  Add "label" distinct from hostname, because there may be hosts behind
 #   firewalls with different external names (or no external name at all) rsyncing

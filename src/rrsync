@@ -71,6 +71,10 @@
 #   -wo mode, disable backup-dir/partial-dir/delay-updates/log-file and short
 #   -b under -no-overwrite, and open the log file with O_NOFOLLOW. Documented
 #   why the Linux-only /proc-fd TOCTOU pin is not ported.
+# Modified 22 September 2026 by Jim Lippard to make check_arg's /-removal
+#   consistent (one character addition of + to substitution). Verified that
+#   the perl version didn't have the bug the python version of rrsync fixed in
+#   the rsync-3.5.1 release.
 #
 # NOTE: rsync 3.5.0 portable hardening (skipped on pre-3.5 hosts, where these flags
 # do not exist). Both matter on EVERY platform: the exec'd rsync does not
@@ -561,7 +565,7 @@ sub check_arg
     }
     $arg =~ s/\\(.)/$1/g;
     if ($subdir ne '/' && ($type == 3 || ($type == 2 && !$am_sender))) {
-	$arg =~ s#//#/#g;
+	$arg =~ s#//+#/#g;
 	die "Do not use .. in --$opt; anchor the path at the root of your restricted dir.\n"
 	    if $arg =~ m#(^|/)\.\.(/|$)#;
 	$arg =~ s#^/#$subdir/#;

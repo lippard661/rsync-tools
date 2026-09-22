@@ -64,3 +64,5 @@
 	O_NOFOLLOW. Documented why the Linux-only /proc-fd TOCTOU pin is
 	not ported.
 	rsync-client.pl: Inject --confine-root on server side.
+22 September 2026: rrsync: single character change for /-removal consistency
+	in check_arg subroutine (add +).

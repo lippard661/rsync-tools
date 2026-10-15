@@ -75,6 +75,33 @@
 #   consistent (one character addition of + to substitution). Verified that
 #   the perl version didn't have the bug the python version of rrsync fixed in
 #   the rsync-3.5.1 release.
+# Modified 15 October 2026 by Claude Opus 5.5 at the direction of Jim Lippard
+#   after a checklist review:
+#   - Remove e, f and i from the accepted short no-arg options (the 2 January
+#     2024 entry says they were removed; they were not). rsync gives -e and -f
+#     an argument, so a standalone "-e" swallowed the "." separator: the server
+#     rsync then chdir'd into the first transfer arg while rrsync had validated
+#     the rest relative to the restricted dir, so a client that had pushed a
+#     symlink to an outside directory could read and write through it, even
+#     with --confine-root (demonstrated with rsync 3.2.7 and 3.5.1). The
+#     server's -e.iLsfx... protocol string is still accepted by the
+#     (e\d*\.\w*)? group. Same set as the python version.
+#   - Escape control characters in everything written to the log, so a
+#     newline in SSH_ORIGINAL_COMMAND cannot forge log lines.
+#   - Lock: wait at most LOCK_WAIT seconds, then refuse and log, instead of
+#     blocking forever behind a hung holder (python refuses at once).
+#   - Exit with 127 if rsync could not be run and 128+signal if it was killed
+#     (a killed rsync used to exit 0).
+#   - Prefer Homebrew rsync on macOS when present (as rsync-client.pl does);
+#     /usr/bin/rsync there is openrsync or 2.6.9, which lack --confine-root.
+#   - Collapse // before deciding whether an arg is -absolute (python order).
+#   - Take _rsyncu's home directory (log and lock files) from the password
+#     database instead of assuming /home/_rsyncu (macOS homes are in /Users,
+#     where every run without -no-lock died opening the lock file).
+#   - Correct the OpenBSD comment: pledge/unveil confine rrsync only. The
+#     17 May 2026 entry's "already mitigated on OpenBSD" was wrong for the
+#     same reason (an exec'd rsync gets no unveil); that claim came from a
+#     Claude analysis in the session that prompted it.
 #
 # NOTE: rsync 3.5.0 portable hardening (skipped on pre-3.5 hosts, where these flags
 # do not exist). Both matter on EVERY platform: the exec'd rsync does not
@@ -94,7 +121,7 @@
 #      --backup-dir, --compare-dest, --copy-dest. check_arg anchors a leading
 #      slash under the restricted dir and runs abs_is_under, but that is the
 #      same realpath-then-exec pattern with the same TOCTOU window this script
-#      cannot close (see the pledge/unveil note above). In 3.5.0 the rsync
+#      cannot close (see the pledge/unveil note at the OpenBSD block). In 3.5.0 the rsync
 #      binary confines its OWN resolution of these paths (CVE-2026-53795,
 #      -70460); --confine-root is what backstops the wrapper's check-to-exec
 #      gap so a raced parent-symlink flip on one of these option paths cannot
@@ -114,16 +141,23 @@ use if $^O eq "openbsd", "OpenBSD::Unveil";
 
 sub get_rsync_path {
     return ('/usr/local/bin/rsync') if ($^O eq 'openbsd');
-    return ('/usr/bin/rsync'); # Darwin/macOS, Linux
+    # macOS /usr/bin/rsync is openrsync (or 2.6.9) and lacks --confine-root.
+    return ('/opt/homebrew/bin/rsync')
+	if ($^O eq 'darwin' && -x '/opt/homebrew/bin/rsync');
+    return ('/usr/bin/rsync'); # Linux, macOS without Homebrew rsync
 }
 
 # You may configure these values to your liking.  See also the section
 # of options if you want to disable any options that rsync accepts.
 use constant RSYNC => get_rsync_path();
 use constant DOAS => '/usr/bin/doas';
-use constant LOGFILE => '/home/_rsyncu/rrsync.log';
-use constant LOCKFILE => '/home/_rsyncu/.rrsync.lock';
+use constant RSYNC_USER_HOME => (getpwnam ('_rsyncu'))[7] || '/home/_rsyncu';
+use constant LOGFILE => RSYNC_USER_HOME . '/rrsync.log';
+use constant LOCKFILE => RSYNC_USER_HOME . '/.rrsync.lock';
 use constant ZONEINFO_DIR => '/usr/share/zoneinfo';
+# Seconds to wait for the lock before refusing (a hung holder would
+# otherwise block every later transfer forever).
+use constant LOCK_WAIT => 60;
 
 # Set to 1 on hosts still running rsync < 3.5.0 -- disables --confine-root and
 # --drop-D, which do not exist before 3.5.0. On an all-3.5.0 fleet, leave at 0.
@@ -207,7 +241,12 @@ our $am_sender = $command =~ /^--server\s+--sender\s/; # Restrictive on purpose!
 die "$0 -ro: sending to read-only server not allowed\n" if $ro && !$am_sender;
 die "$0 -wo: reading from write-only server not allowed\n" if $wo && $am_sender;
 
-# If on OpenBSD, enforce restricted directory and read-only.
+# If on OpenBSD, pledge and unveil this script. Note on pledge/unveil: they
+# confine rrsync itself (its own reads, the log and lock files), NOT the rsync
+# it execs: an exec without execpromises clears the pledge and the unveil list,
+# so the exec'd rsync (or doas and the rsync it runs) starts unrestricted. The
+# restricted dir and -ro are enforced on rsync only by the argument validation
+# below and, on rsync 3.5.0+, --confine-root.
 if ($^O eq 'openbsd') {
     my @promises = ('rpath', 'wpath', 'cpath', 'unveil', 'exec', 'proc');
     push (@promises, 'flock') if (!$no_lock);
@@ -246,7 +285,10 @@ our $short_disabled = 's';
 # These are disabled when the restricted dir is not "/":
 our $short_disabled_subdir = 'KLk';
 
-our $short_no_arg = 'ACDEHIJKLNORSUWXbcdefgiklmnopqrstuvxyz'; # DO NOT REMOVE ANY
+# Not e or f: rsync gives them an argument, so a standalone -e or -f would
+# take the next word (the "." separator) as its argument. The server's
+# -e.iLsfx... protocol string is matched by the (e\d*\.\w*)? group instead.
+our $short_no_arg = 'ACDEHIJKLNORSUWXbcdgklmnopqrstuvxyz'; # DO NOT REMOVE ANY
 our $short_with_num = '@B'; # DO NOT REMOVE ANY
 
 # To disable a long-named option, change its value to a -1.  The values mean:
@@ -385,17 +427,25 @@ if ($no_del) {
 
 my $write_log = safe_open_logfile();
 
-if (!$no_lock) {
-    open (LOCK_FH, '>>', LOCKFILE) or die "open lockfile: $!";
-    flock LOCK_FH, ($am_sender ? LOCK_SH : LOCK_EX) or die "lock lockfile: $!";
-}
-
-chdir($subdir) or die "$0: Unable to chdir to restricted dir: $!\n";
-
-# for logging, moved up here to allow eval to catch and log errors
+# for logging, moved up here to allow eval and the lock to log errors
 my $host = $ENV{SSH_CONNECTION} || 'unknown';
 $host =~ s/ .*//; # Keep only the client's IP addr
 $host =~ s/^::ffff://;
+
+if (!$no_lock) {
+    open (LOCK_FH, '>>', LOCKFILE) or die "open lockfile: $!";
+    my $lock_type = ($am_sender ? LOCK_SH : LOCK_EX) | LOCK_NB;
+    my $waited = 0;
+    until (flock (LOCK_FH, $lock_type)) {
+	deny_and_exit ("lock lockfile: $!") unless $!{EWOULDBLOCK};
+	deny_and_exit ("another rrsync has held the lock for over " . LOCK_WAIT .
+		       " seconds (hung?)") if ($waited >= LOCK_WAIT);
+	sleep (1);
+	$waited++;
+    }
+}
+
+chdir($subdir) or die "$0: Unable to chdir to restricted dir: $!\n";
 
 my(@opts, @args, @log_args);
 my $in_options = 1;
@@ -446,16 +496,16 @@ my $ok = eval {
 	    # Save original args for logging.
 	    push(@log_args, $_);
 
+	    # Collapse // first, so //subdir/x is recognized as absolute (python order).
+	    s#//+#/#g;
+
 	    # Detect if this is an absolute arg matching the restricted dir
-	    my $is_absolute_arg = $absolute && $subdir ne '/' && 
+	    my $is_absolute_arg = $absolute && $subdir ne '/' &&
 		($_ eq $subdir || index($_, $subdir_slash) == 0);
-      
+
 	    # Validate args to ensure they don't try to leave our restricted dir.
-	    if ($is_absolute_arg) {
-		s#//+#/#g;          # collapse, but keep the leading slash
-	    }
-	    else {
-		s#//+#/#g;
+	    # An absolute arg keeps its leading slash.
+	    if (!$is_absolute_arg) {
 		s#^/##;
 		s#^$#.#;
 	    }
@@ -487,14 +537,7 @@ my $ok = eval {
 if (!$ok) {
     my $err = $@ || "unknown error";
     chomp $err;
-    if ($write_log) {
-        my @t = (localtime)[0,1,2,3,4,5];
-        printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s DENIED: %s [%s]\n",
-            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0],
-            $host, $err, $ENV{SSH_ORIGINAL_COMMAND};
-        close LOG;
-    }
-    exit 1;
+    deny_and_exit ($err);
 }
 
 # After validation, convert exact-dir absolute args to "." (so rsync sees relative path):
@@ -532,16 +575,41 @@ if ($write_log) {
     my ($ss,$mm,$hh,$day,$month,$year) = (localtime)[0,1,2,3,4,5];
     $month += 1;
     $year += 1900;
-    printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, $host, "@opts @log_args", $subdir, $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
+    printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s [%s (%s)%s%s%s%s%s%s%s]\n", $year, $month, $day, $hh, $mm, $ss, log_safe ($host), log_safe ("@opts @log_args"), log_safe ($subdir), $doas ? '(doas)' : '', $ro ? '(ro)' : '', $wo ? '(wo)' : '', $munge ? '(munge)' : '', $no_del ? '(no-del)' : '', $no_lock ? '(no-lock)' : '', $no_overwrite ? '(no-overwrite)' : '';
     close LOG;
 }
 
 # Note: This assumes that the rsync protocol will not be maliciously hijacked.
-if ($doas) {
-    exit (system(DOAS, RSYNC, @opts, '--', @args) >> 8);
+my @run = $doas ? (DOAS, RSYNC) : (RSYNC);
+system (@run, @opts, '--', @args);
+my $status = $?;
+if ($status == -1) {
+    print STDERR "$0: could not run $run[0]: $!\n";
+    exit 127;
 }
-else {
-    exit (system(RSYNC, @opts, '--', @args) >> 8);
+exit (128 + ($status & 127)) if ($status & 127);	# killed by a signal
+exit ($status >> 8);
+
+# Log a refusal and exit 1. Everything taken from the client is escaped.
+sub deny_and_exit {
+    my ($err) = @_;
+    if ($write_log) {
+        my @t = (localtime)[0,1,2,3,4,5];
+        printf LOG "%04d-%02d-%02d %02d:%02d:%02d %s DENIED: %s [%s]\n",
+            $t[5]+1900, $t[4]+1, $t[3], $t[2], $t[1], $t[0],
+            log_safe ($host), log_safe ($err),
+            log_safe ($ENV{SSH_ORIGINAL_COMMAND} // '');
+        close LOG;
+    }
+    exit 1;
+}
+
+# Escape control characters as \xNN in text from the client before it is
+# logged, so a newline cannot forge a log line. Other text is unchanged.
+sub log_safe {
+    my ($s) = @_;
+    $s =~ s/([\x00-\x1f\x7f])/sprintf ("\\x%02x", ord ($1))/ge;
+    return $s;
 }
 
 sub abs_is_under {

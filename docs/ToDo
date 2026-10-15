@@ -1,5 +1,102 @@
 BUGS:
 
+(Fixed 15 October 2026):
+       rrsync:
+	- Remove e, f and i from the accepted short no-arg options (the 2
+	January 2024 entry says they were removed; they were not). rsync
+	gives -e and -f an argument, so a standalone "-e" swallowed the
+	"." separator: the server rsync then chdir'd into the first
+	transfer arg while rrsync had validated the rest relative to the
+	restricted dir, so a client that had pushed a symlink to an
+	outside directory could read and write through it, even with
+	--confine-root (demonstrated with rsync 3.2.7 and 3.5.1). The
+	server's -e.iLsfx... protocol string is still accepted by the
+	(e\d*\.\w*)? group. Same set as the python version.
+	- Escape control characters in everything written to the log, so a
+	newline in SSH_ORIGINAL_COMMAND cannot forge log lines.
+	- Lock: wait at most LOCK_WAIT seconds, then refuse and log,
+	instead of blocking forever behind a hung holder (python refuses
+	at once).
+	- Exit with 127 if rsync could not be run and 128+signal if it was
+	killed
+	(a killed rsync used to exit 0).
+	- Prefer Homebrew rsync on macOS when present (as rsync-client.pl
+	does); /usr/bin/rsync there is openrsync or 2.6.9, which lack
+	--confine-root.
+	- Collapse // before deciding whether an arg is -absolute (python
+	order).
+	- Take _rsyncu's home directory (log and lock files) from the
+	password database instead of assuming /home/_rsyncu (macOS homes
+	are in /Users, where every run without -no-lock died opening the
+	lock file).
+	- Correct the OpenBSD comment: pledge/unveil confine rrsync
+	only. The 17 May 2026 entry's "already mitigated on OpenBSD" was
+	wrong for the same reason (an exec'd rsync gets no unveil); that
+	claim came from a Claude analysis in the session that prompted it.
+
+	rsync-client.pl:
+	- Pass the ssh command to rsync as -e in argv instead of
+	RSYNC_RSH. With RSYNC_RSH passed through doas (setenv) or sudo
+	(env_keep), _rsyncu could run a whitelisted rsync command with its
+	own RSYNC_RSH and so run any program as root, with a doas log line
+	identical to a normal one
+	(demonstrated with sudo and opendoas). The -e string now also
+	gives ssh -o UserKnownHostsFile=<_rsyncu's known_hosts>, since an
+	elevated ssh otherwise checks root's. Client-side elevated command
+	lines change; see Security note 3. Remove setenv { RSYNC_RSH } /
+	env_keep RSYNC_RSH.
+	- Prefer doas when present, fall back to sudo (was: sudo whenever
+	present).  Unveil the one in use only when a path in this pass
+	needs it, and die with a message if it is needed and neither
+	exists.
+	- Escape control characters in client-supplied text written to the
+	log, so a newline in SSH_ORIGINAL_COMMAND cannot forge log lines.
+	- Config lists accept "," with or without following whitespace;
+	lines holding only whitespace are treated as blank.
+	- In "both" mode on OpenBSD, unveil a configured ssh-identity
+	before the second pass tests it (the first pass's unveils are
+	already in force).
+        - Check exit statuses. Client: a failed setup skips that item's rsync
+	(its cleanup still runs), a failed rsync or cleanup is reported,
+	the remaining items still run, and the exit status is 1 if
+	anything failed. rsync exit 24 (source files vanished during the
+	transfer) is reported but not counted. A ";" chain stops at its
+	first failure.  Server: a failed setup skips the rsync; a failed
+	rsync is logged as "Command failed (<reason>): ..." instead of
+	"Command executed: ..."; the exit status is rsync's, or 1 for a
+	disallowed command, path or options or a failed setup or cleanup
+	(it was always 0).
+	- Accept -vlogDtprze.LsfxCIvu, the server option string a client
+	sends for a pull with --delete-after or --delete-before (they turn
+	off incremental recursion, so no "i"); such pulls were refused as
+	a disallowed option (shown with rsync 3.2.7 and 3.5.1).
+	- Documentation: the config list format, the doas/sudo command
+	forms (including --confine-root on the server side), the key
+	types. The 2026-08-13 entry's "if the config doesn't already
+	specify it" has no code behind it and needs none: rsync does not
+	forward --confine-root from client to server, so a --confine-root
+	in rsync-options only confines the client's own rsync.
+
+	rsync-altroot.pl:
+	- Rsync the root directories only when fstab has an /altroot entry
+	(and it is mounted). The 2026-07-01 mount check covered only the
+	filesystems with an fstab entry, so with no /altroot line the root
+	dirs were rsynced with --delete into /altroot on the root
+	disk. (That check came from a Claude review; this was its gap.)
+	- The mount check skips a filesystem whose source dir does not
+	exist, as the mount and rsync loops already do (it used to abort
+	the run).
+	- Check the exit status of every rsync and umount; report failures
+	and exit 1 at the end. rsync exit 24 (source files vanished during
+	the transfer, normal on a live /var) is reported but is not a
+	failure.
+	- If a mount fails, unmount what this run mounted before dying, so
+	the next run does not fail on "already mounted".
+	- Exit 1 on an invalid option (was 0).
+	- pledge/unveil: drop wpath/cpath and the /altroot rwc unveil. The
+	script itself only reads (rsync, mount and umount are exec'd and
+	are not confined by its unveil); unveil / r covers its reads.
+
 (Fixed 13 August 2026): rrsync: Support rsync-3.5.0+ by default (with
        constant to modify for pre-3.5.0), and add python rrsync features
        minus a fix for the TOCTOU mitigation on path resolution that is

@@ -104,9 +104,47 @@
 #    for OpenBSD (default), Linux, and macOS and now update rsync
 #    location for macOS. Set $RSYNC_USER_HOME from getpwname (since
 #    macOS uses /Users).
-# Mdodified 2026-08-13 by Jim Lippard to inject --confine-root=<dir> into
+# Modified 2026-08-13 by Jim Lippard to inject --confine-root=<dir> into
 #    rsync options by default, if the config doesn't already specify it,
 #    for rsync versions >3.5.0.
+# Modified 2026-10-15 by Claude Opus 5.5 at the direction of Jim Lippard
+#    after a checklist review:
+#    - Pass the ssh command to rsync as -e in argv instead of RSYNC_RSH. With
+#      RSYNC_RSH passed through doas (setenv) or sudo (env_keep), _rsyncu could
+#      run a whitelisted rsync command with its own RSYNC_RSH and so run any
+#      program as root, with a doas log line identical to a normal one
+#      (demonstrated with sudo and opendoas). The -e string now also gives ssh
+#      -o UserKnownHostsFile=<_rsyncu's known_hosts>, since an elevated ssh
+#      otherwise checks root's. Client-side elevated command lines change; see
+#      Security note 3. Remove setenv { RSYNC_RSH } / env_keep RSYNC_RSH.
+#    - Prefer doas when present, fall back to sudo (was: sudo whenever present).
+#      Unveil the one in use only when a path in this pass needs it, and die
+#      with a message if it is needed and neither exists.
+#    - Escape control characters in client-supplied text written to the log,
+#      so a newline in SSH_ORIGINAL_COMMAND cannot forge log lines.
+#    - Config lists accept "," with or without following whitespace; lines
+#      holding only whitespace are treated as blank.
+#    - In "both" mode on OpenBSD, unveil a configured ssh-identity before the
+#      second pass tests it (the first pass's unveils are already in force).
+#    - Check exit statuses. Client: a failed setup skips that item's rsync
+#      (its cleanup still runs), a failed rsync or cleanup is reported, the
+#      remaining items still run, and the exit status is 1 if anything
+#      failed. rsync exit 24 (source files vanished during the transfer) is
+#      reported but not counted. A ";" chain stops at its first failure.
+#      Server: a failed setup skips the rsync; a failed rsync is logged as
+#      "Command failed (<reason>): ..." instead of "Command executed: ...";
+#      the exit status is rsync's, or 1 for a disallowed command, path or
+#      options or a failed setup or cleanup (it was always 0).
+#    - Accept -vlogDtprze.LsfxCIvu, the server option string a client sends
+#      for a pull with --delete-after or --delete-before (they turn off
+#      incremental recursion, so no "i"); such pulls were refused as a
+#      disallowed option (shown with rsync 3.2.7 and 3.5.1).
+#    - Documentation: the config list format, the doas/sudo command forms
+#      (including --confine-root on the server side), the key types. The
+#      2026-08-13 entry's "if the config doesn't already specify it" has no
+#      code behind it and needs none: rsync does not forward --confine-root
+#      from client to server, so a --confine-root in rsync-options only
+#      confines the client's own rsync.
 #
 # NOTE:
 # rsync 3.5.0 portable hardening (skipped on pre-3.5 hosts). The exec'd rsync
@@ -155,8 +193,8 @@
 # the full hostname rather than omitting the domain portion.
 
 # Security:
-# 1. Use an unprivileged rsync user with a passwordless SSH DSA key as the
-#    initiator (client side) of the rsync, when possible.
+# 1. Use an unprivileged rsync user with a passwordless SSH ED25519 (or ECDSA)
+#    key as the initiator (client side) of the rsync, when possible.
 #
 # 2. Use an authorized_keys2 file on the server side which specifies a
 #    specific command (calling this script with the appropriate arguments)
@@ -165,26 +203,41 @@
 #    the rsync user cannot modify it or anything else in its .ssh directory.
 #    (Manually update its known_hosts file.)
 #
-# 3. Put the specific needed rsync commands into your sudoers file, which
-#    specify the particular dirs or files being rsynced.  These commands
-#    are of the following form on the source (server) side when using "pull":
-#      $RSYNC_PATH --server --sender -vlogDtprze.[iLf] <rsync options> . <source dir>
-#    and of the following form on the destination (server) side when using "push":
-#      $RSYNC_PATH --server -vlogDtprze.[iLf] <rsync options> . <dest dir>
-#    There is a command of these forms for each source/dest directory; it is recommended
-#    that they be put into a command alias such as
+# 3. Permit only the specific rsync commands needed, with their exact arguments,
+#    in doas.conf ("cmd ... args ...") or sudoers. doas is used when installed,
+#    sudo otherwise. A rule for rsync without its arguments lets _rsyncu run
+#    rsync as root with any arguments, which is root access. Pass no environment
+#    through (no setenv/keepenv for doas, no env_keep for sudo): rsync runs
+#    whatever RSYNC_RSH names, so passing it through also gives root access.
+#
+#    On the server side, when using "pull" (source), the command is:
+#      $RSYNC --server --sender --confine-root=<dir> -vlogDtprze.iLsfxCIvu <rsync options> . <source path>
+#    and when using "push" (destination):
+#      $RSYNC --server --confine-root=<dir> -vlogDtprze.iLsfxCIvu <rsync options> . <dest path>
+#    where <dir> is the path itself if it ends in "/", else its parent directory
+#    (--confine-root is omitted when RSYNC_PRE35 is set or <dir> is "/"). The
+#    -vlogDtprze... string varies with the client's rsync version (see
+#    @POSSIBLE_SERVER_OPTIONS). A source path with a * is expanded, so the
+#    command carries the matching files in place of the pattern.
+#
+#    On the client side, when using "push" (source):
+#      $RSYNC -avz -e "<rsh>" <rsync options> <source path(s)> $RSYNC_USER@<dest host>:<dest path>
+#    and when using "pull" (destination):
+#      $RSYNC -avz -e "<rsh>" <rsync options> $RSYNC_USER@<source host>:<source path> <dest path>
+#    where <rsh> is one argument:
+#      $SSH -i <identity> -o UserKnownHostsFile=$RSYNC_USER_SSHDIR/known_hosts
+#    (with -vv after $SSH when $DEBUG is set, which will not match the rules).
+#    For example, in doas.conf (quotes make the rsh one argument):
+#      permit nopass _rsyncu as root cmd /usr/local/bin/rsync args -avz -e "/usr/bin/ssh -i /home/_rsyncu/.ssh/id_ed25519 -o UserKnownHostsFile=/home/_rsyncu/.ssh/known_hosts" /etc/pf.conf _rsyncu@backup:/backup/pf.conf
+#    doas logs it with the argv joined by single spaces, no quotes:
+#      _rsyncu ran command /usr/local/bin/rsync -avz -e /usr/bin/ssh -i /home/_rsyncu/.ssh/id_ed25519 -o UserKnownHostsFile=/home/_rsyncu/.ssh/known_hosts /etc/pf.conf _rsyncu@backup:/backup/pf.conf as root from <cwd>
+#    In sudoers, a "," ":" "=" or "\" in an argument must be escaped with a
+#    backslash (UserKnownHostsFile\=..., <host>\:<path>). It is recommended that
+#    the commands be put into a command alias such as
 #       Cmnd_Alias RSYNC_CMDS = <comma-separated list of commands>
 #
-#    The format of the commands on the source (client) side when using "push":
-#        $RSYNC_PATH -avz <rsync options> <source dir> $RSYNC_USER@<dest host>\:<dest dir>
-#    The backslash must appear in front of the colon; that character has special meaning
-#    in the sudoers file syntax.
-#
-#    Finally, the format on the destination (client) side when using "pull":
-#        $RSYNC_PATH -avz <rsync options> $SOURCE_HOST\:<source dir> <dest dir>
-#
-#    In previous versions, for the latter two cases the SSH identity used was root's
-#    rather than the rsync user, but now the rsync user is used in all cases.
+#    The SSH identity used is the rsync user's in all cases, and the elevated
+#    ssh checks host keys against the rsync user's known_hosts.
 #
 # 4. The server side script will only permit rsync for pathnames that are in the appropriate
 #    entry in the config file.  Make sure the ownership and permissions on the config file
@@ -194,11 +247,9 @@
 # splitting them out in the authorized_keys file accordingly and specifying
 # the identity to use in the ssh-identity field of the config file.
 #
-# NOTE: As of sudo version 1.6.9p4 (the version included with OpenBSD 4.2), sudo filters
-# environment variables.  If you do any rsyncs with this script that use sudo, you
-# will need to permit the RSYNC_RSH environment variable to be passed by adding
-# a line to your sudoers file that says:
-#  Default:_rsyncu env_keep +="RSYNC_RSH"
+# NOTE: Earlier versions passed the ssh command in RSYNC_RSH and needed
+# "Defaults:_rsyncu env_keep += RSYNC_RSH" (sudo) or "setenv { RSYNC_RSH }"
+# (doas). Remove those: see Security note 3.
 #
 # Note on pledge/unveil and doas/sudo:
 # pledge/unveil restrict rsync-client.pl itself, but they are NOT inherited
@@ -237,8 +288,8 @@
 # # Comment.
 # source: sourcehost
 # destination: destinationhost
-# source-dirlist: list,of,dirs,or,files
-# destination-dirlist: list,of,dirs,or,files
+# source-dirlist: list, of, dirs, or, files
+# destination-dirlist: list, of, dirs, or, files
 # rsync-options: --delete --delete-after --exclude file --exclude file, --exclude file, ""
 # [optional] ssh-identity: [ssh-identity-file]
 # source-setup: commandline, commandline, commandline
@@ -254,6 +305,8 @@
 
 # The number of comma-separated items in each source-sudo, destination-sudo, source-dirlist,
 # destination-dirlist, source- and dest- setup and cleanup, and rsync-options list must be the same.
+# Items are separated by "," with or without whitespace around it, so no item (path, option
+# or command) can itself contain a comma.
 # If a given directory or file requires no rsync options, use "".  If there are files  to be
 # excluded for a given directory, use "--exclude file [--exclude file [...]]" for each file in that
 # directory; commas separate the exclude file lists for each directory.  Other common options
@@ -266,7 +319,12 @@
 # on the destination.
 
 # Setup commands will be executed before rsync, cleanup commands will be
-# executed after the rsync.
+# executed after the rsync. If a setup command fails, the rsync for that item
+# is skipped; its cleanup command runs whatever happened. Commands in a ";"
+# chain stop at the first one that fails. The client exits 1 if any setup,
+# rsync (other than exit 24, vanished source files) or cleanup failed; the
+# server exits with rsync's status, or 1 if it refused the command or a setup
+# or cleanup failed.
 
 # Note on OpenBSD: Setup/cleanup commands and all commands in
 # semicolon-separated chains (e.g., "cmd1; cmd2; cmd3") have their binary
@@ -321,9 +379,12 @@ my $HOSTNAME = hostname();
 my $DOMAIN = '';
 ($HOSTNAME, $DOMAIN) = split (/\./, $HOSTNAME, 2);
 
-if (-e $SUDO) {
+# Prefer doas; fall back to sudo only when doas is not installed.
+if (!-x $DOAS && -x $SUDO) {
     $USE_SUDO = 1;
 }
+my $ELEVATE = $USE_SUDO ? $SUDO : $DOAS;
+my $HAVE_ELEVATE = -x $ELEVATE; # tested here, before any unveil
 
 my $CLIENT = 0;
 
@@ -345,13 +406,16 @@ my @POSSIBLE_SERVER_OPTIONS = ('-vlogDtprz',
 			       '-vlogDtprze.iLfx',
 			       '-vlogDtprze.iLfxC',
 			       '-vlogDtprze.iLfxCIvu',
-			       '-vlogDtprze.iLsfxCIvu');
+			       '-vlogDtprze.iLsfxCIvu',
+			       '-vlogDtprze.LsfxCIvu');
 # The "R" option is for --relative; the e.[i] options only appear after rsync 3.0.; .f only in rsync 3.0.7+
 # I probably haven't made this work for 3.0 uses of --relative.
 # The "L" option appeared with rsync 3.0.8.
 # The "f" disappears in rsync 3.1.0.
 # The "C" option appeared with rsync 3.1.2.
 # the "s" option after the dot appeared with rsync 3.3.0.
+# The "i" (incremental recursion) is absent for a pull with --delete-after or
+# --delete-before, which turn incremental recursion off.
 
 # For dirlist subroutine; could add other forms of validation in
 # the future for rsync options, commands, etc.
@@ -366,6 +430,8 @@ my ($push, $both, $other_host, $source, $destination,
     @source_setup, @source_cleanup, @dest_setup, @dest_cleanup,
     @setup_command, @cleanup_command, $idx);
 my (@this_command);
+my $unveil_started = 0; # set once the first unveil() call has been made (OpenBSD)
+my $failures = 0;       # client: setups, rsyncs and cleanups that failed
 
 # Client variables.
 my ($source_info, $destination_info, @rsync_command);
@@ -423,6 +489,11 @@ if ($CLIENT) {
 	parse_config();
 	exec_client();
     }
+    if ($failures) {
+	print STDERR "$failures operation(s) failed.\n";
+	exit 1;
+    }
+    exit 0;
 }
 # server gets invoked twice if "both" is used, need to do what the
 # client expects. [Should no longer be the case.]
@@ -435,7 +506,7 @@ else {
 	$push = 1;
     }
     parse_config();
-    exec_server();
+    exit (exec_server ());
 }
 
 ### Subroutines.
@@ -474,7 +545,7 @@ sub parse_config {
 
     open (CONFIG, '<', $CONFIG_FILE) || die "Cannot open config file. $CONFIG_FILE $!\n";
     while (<CONFIG>) {
-	if (/^\s*#|^$/) {
+	if (/^\s*(#|$)/) {
 	}
 	elsif (/^\s*source:\s+(.*)$/) {
 	    if (!$have_source) {
@@ -673,6 +744,11 @@ sub parse_config {
 
 # Client function.
 sub exec_client {
+    # In "both" mode the first pass's unveils are already in force (not yet
+    # locked), so the file test below needs the configured identity unveiled.
+    if ($^O eq 'openbsd' && $unveil_started && $ssh_identity ne '') {
+	unveil ($ssh_identity, 'r') || die "Cannot unveil $ssh_identity: $!\n";
+    }
     if ($ssh_identity ne '') {
 	if (-e "$ssh_identity") {
 	    $rsync_identity = $ssh_identity;
@@ -690,12 +766,13 @@ sub exec_client {
     else {
 	die "Cannot find .ssh/(ed25519 ecdsa)_id. RSA and DSA keys are no longer supported.\n"
     }
-    $ENV{'RSYNC_RSH'} = "$SSH -i $rsync_identity";
-    if ($DEBUG) {
-	$ENV{'RSYNC_RSH'} = "$SSH -vv -i $rsync_identity";
-    }
+    # The ssh command goes to rsync as -e in argv, so it is part of the command
+    # line doas/sudo match and log. Never via RSYNC_RSH (see Security note 3).
+    delete $ENV{'RSYNC_RSH'};
+    my $rsh = ($DEBUG ? "$SSH -vv" : $SSH) .
+	" -i $rsync_identity -o UserKnownHostsFile=$RSYNC_USER_SSHDIR/known_hosts";
 
-    @rsync_command = ($RSYNC, '-avz');
+    @rsync_command = ($RSYNC, '-avz', '-e', $rsh);
 
     if ($push) {
 	$source_info = "";
@@ -712,14 +789,19 @@ sub exec_client {
 	@allowed_paths = @destination_dirlist;
     }
 
+    my @sudo_for_paths = $push ? @source_sudo : @destination_sudo;
+    my $need_elevate = grep { $_ } @sudo_for_paths;
+    die "This entry needs doas or sudo, but neither $DOAS nor $SUDO is installed.\n"
+	if ($need_elevate && !$HAVE_ELEVATE);
+
     # Use pledge and unveil to restrict access for client. stdio already included.
     if ($^O eq 'openbsd') {
 	my ($path, $command);
-	
+
 	pledge ('rpath', 'wpath', 'cpath', 'exec', 'unveil', 'proc') || die "Cannot pledge promises. $!\n";
+	$unveil_started = 1;
 
 	# Unveil dir paths.
-	my @sudo_for_paths = $push ? @source_sudo : @destination_sudo;
 	for (my $idx = 0; $idx <= $#allowed_paths; $idx++) {
 	    my $path = $allowed_paths[$idx];
 	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
@@ -759,13 +841,10 @@ sub exec_client {
 		}
 	    }
 	}
-	
-	# Would be better to check for need first.
-	if ($USE_SUDO) {
-	    unveil ($SUDO, 'rx') || die "Cannot unveil $SUDO: $!\n";
-	}
-	else {
-	    unveil ($DOAS, 'rx') || die "Cannot unveil $DOAS: $!\n";
+
+	# doas or sudo, only if a path in this pass needs it.
+	if ($need_elevate) {
+	    unveil ($ELEVATE, 'rx') || die "Cannot unveil $ELEVATE: $!\n";
 	}
 
 	# If both, only lock down AFTER the pull has completed, since
@@ -778,17 +857,18 @@ sub exec_client {
     }
 
     for ($idx = 0; $idx <= $#source_dirlist; $idx++) {
+	my $item = "$source_info$source_dirlist[$idx] -> $destination_info$destination_dirlist[$idx]";
+	my $setup_err = '';
 	if ($setup_command[$idx]) {
 	    print "setup: $setup_command[$idx]\n" if ($DEBUG);
-	    exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
+	    $setup_err = exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
+	    if ($setup_err) {
+		print STDERR "Setup for $item failed ($setup_err); skipping its rsync.\n";
+		$failures++;
+	    }
 	}
 	if (($push && $source_sudo[$idx]) || (!$push && $destination_sudo[$idx])) {
-	    if ($USE_SUDO) {
-		@this_command = ($SUDO, @rsync_command);
-	    }
-	    else {
-		@this_command = ($DOAS, @rsync_command);
-	    }
+	    @this_command = ($ELEVATE, @rsync_command);
 	}
 	else {
 	    @this_command = (@rsync_command);
@@ -799,24 +879,33 @@ sub exec_client {
 	    ? bsd_glob("$source_info$source_dirlist[$idx]", GLOB_LIMIT|GLOB_NOCHECK|GLOB_BRACE|GLOB_QUOTE)
 	    : ("$source_info$source_dirlist[$idx]");
 	
-	if ($rsync_options[$idx]) {
-	    print "@this_command $rsync_options[$idx] @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    system (@this_command, split (' ', $rsync_options[$idx]), @sources, "$destination_info$destination_dirlist[$idx]");
-	}
-	else {
-	    print "@this_command @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
-	    system (@this_command, @sources, "$destination_info$destination_dirlist[$idx]");
+	if (!$setup_err) {
+	    my @options = $rsync_options[$idx] ? split (' ', $rsync_options[$idx]) : ();
+	    print "@this_command @options @sources $destination_info$destination_dirlist[$idx]\n" if ($DEBUG);
+	    my ($err, $code) = run_command (@this_command, @options, @sources, "$destination_info$destination_dirlist[$idx]");
+	    if ($err && $code == 24) {
+		print STDERR "rsync $item: some source files vanished during the transfer (exit 24).\n";
+	    }
+	    elsif ($err) {
+		print STDERR "rsync $item failed: $err.\n";
+		$failures++;
+	    }
 	}
 
         if ($cleanup_command[$idx]) {
             print "cleanup: $cleanup_command[$idx]\n" if ($DEBUG);
-	    exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
+	    my $err = exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
+	    if ($err) {
+		print STDERR "Cleanup for $item failed ($err).\n";
+		$failures++;
+	    }
         }
     }
 }
 
-# Server function.
+# Server function. Returns the exit status for the server process.
 sub exec_server {
+    my $exit_status = 0;
     # Push.
     if ($push) {
 	@allowed_paths = @destination_dirlist;
@@ -833,17 +922,22 @@ sub exec_server {
     my $allowed_prefix_re = ($push) ? '--server' : '--server --sender'; # used in regexp
     @allowed_prefix = ($push) ? ('--server') : ('--server', '--sender');
 
+    my @sudo_for_paths = $push ? @destination_sudo : @source_sudo;
+    my $need_elevate = grep { $_ } @sudo_for_paths;
+    die "This entry needs doas or sudo, but neither $DOAS nor $SUDO is installed.\n"
+	if ($need_elevate && !$HAVE_ELEVATE);
+
     # Use pledge and unveil to restrict access for server. stdio already included.
     if ($^O eq 'openbsd') {
 	my ($path, $command);
 
-	pledge ('rpath' , 'wpath', 'cpath', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";;
+	pledge ('rpath' , 'wpath', 'cpath', 'unveil', 'exec', 'proc') || die "Cannot pledge promises. $!\n";
+	$unveil_started = 1;
 
 	unveil ($RSYNC, 'rx') || die "Cannot unveil $RSYNC: $!\n";
 	unveil ($CONFIG_FILE, 'r') || die "Cannot unveil $CONFIG_FILE: $!\n";
 	unveil ($LOG_FILE, 'rwc') || die "Cannot unveil $LOG_FILE: $!\n";
 	unveil ($ZONEINFO_DIR, 'r') || die "Cannot unveil $ZONEINFO_DIR: $!\n";
-	my @sudo_for_paths = $push ? @destination_sudo : @source_sudo;
 	for (my $idx = 0; $idx <= $#allowed_paths; $idx++) {
 	    my $path = $allowed_paths[$idx];
 	    my $unveil_path = ($path =~ m{/$}) ? $path : dirname($path);
@@ -875,12 +969,9 @@ sub exec_server {
 	    }
 	}
 
-	# Would be better to check for need first.
-	if ($USE_SUDO) {
-	    unveil ($SUDO, 'rx') || die "Cannot unveil $SUDO: $!\n";
-	}
-	else {
-	    unveil ($DOAS, 'rx') || die "Cannot unveil $DOAS: $!\n";
+	# doas or sudo, only if a path in this entry needs it.
+	if ($need_elevate) {
+	    unveil ($ELEVATE, 'rx') || die "Cannot unveil $ELEVATE: $!\n";
 	}
 
 	unveil () || die "Cannot lock unveil: $!\n";
@@ -893,7 +984,9 @@ sub exec_server {
 
     my $LOG = open_log_file_secure();
 
-    print $LOG "$time $0 $ENV{'SSH_CONNECTION'} ***New command issued: $command\n";
+    # Everything from the client is logged through log_safe (no forged lines).
+    print $LOG "$time $0 " . log_safe ($ENV{'SSH_CONNECTION'} // '') .
+	" ***New command issued: " . log_safe ($command) . "\n";
 
     if ($command =~ /^rsync $allowed_prefix_re\s*([\s\w\.-]*)\s+\.\s+(.*)$/) {
 	$options = $1;
@@ -911,15 +1004,20 @@ sub exec_server {
 	    if ($path eq $allowed_paths[$idx]) {
 		$allowed_this_path = 1;
 		if (server_options_match ($LOG, $options, $rsync_options[$idx])) {
+		    my $setup_err = '';
 		    if ($setup_command[$idx]) {
 			print $LOG "$time Setup command: $setup_command[$idx]\n";
-			exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
+			$setup_err = exec_command ($setup_command[$idx], $ALLOW_MULTIPLE);
+			if ($setup_err) {
+			    print $LOG "$time Setup command failed ($setup_err); not running rsync.\n";
+			    $exit_status = 1;
+			}
 		    }
 
 		    $time = time();
 		    $time = localtime ($time);
 		    if ($need_sudo) {
-			@this_command = ($USE_SUDO ? $SUDO : $DOAS, $RSYNC);
+			@this_command = ($ELEVATE, $RSYNC);
 		    }
 		    else {
 			@this_command = ($RSYNC);
@@ -940,18 +1038,32 @@ sub exec_server {
 			@confine = ('--confine-root=' . $confine_root);
 		    }
 
-		    print $LOG "$time Command issued: @this_command @allowed_prefix @confine $options . @paths\n";
-		    system (@this_command, @allowed_prefix, @confine, split (' ', $options), '.', @paths);
-		    print $LOG "$time Command executed: @this_command @allowed_prefix @confine $options . @paths\n";
+		    if (!$setup_err) {
+			my $logged = log_safe ("@this_command @allowed_prefix @confine $options . @paths");
+			print $LOG "$time Command issued: $logged\n";
+			my ($err, $code) = run_command (@this_command, @allowed_prefix, @confine, split (' ', $options), '.', @paths);
+			if ($err) {
+			    print $LOG "$time Command failed ($err): $logged\n";
+			    $exit_status = $code;
+			}
+			else {
+			    print $LOG "$time Command executed: $logged\n";
+			}
+		    }
 
 		    if ($cleanup_command[$idx]) {
 			print $LOG "$time Cleanup command: $cleanup_command[$idx]\n";
-			exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
+			my $err = exec_command ($cleanup_command[$idx], $ALLOW_MULTIPLE);
+			if ($err) {
+			    print $LOG "$time Cleanup command failed ($err).\n";
+			    $exit_status ||= 1;
+			}
 		    }
 
 		}
 		else {
-		    print $LOG "$time Disallowed options: $options\n";
+		    print $LOG "$time Disallowed options: " . log_safe ($options) . "\n";
+		    $exit_status = 1;
 		}
 		last;
 	    }
@@ -959,10 +1071,14 @@ sub exec_server {
 
 	$time = time();
 	$time = localtime ($time);
-	print $LOG "$time Disallowed path: $path\n" if (!$allowed_this_path);
+	if (!$allowed_this_path) {
+	    print $LOG "$time Disallowed path: " . log_safe ($path) . "\n";
+	    $exit_status = 1;
+	}
     }
     else { # Doesn't match regexp.
-	print $LOG "$time Disallowed command: $command\n";
+	$exit_status = 1;
+	print $LOG "$time Disallowed command: " . log_safe ($command) . "\n";
         print $LOG "    Permitted:   rsync @allowed_prefix <options> . <dir>\n";
 	if ($push) {
 	    print $LOG "    Running as push.\n";
@@ -973,9 +1089,25 @@ sub exec_server {
     }
 
     close ($LOG);
+    return ($exit_status);
 }
 
 ### Utility subroutines.
+
+# Subroutine to run a command without a shell. Returns ('', 0) on success,
+# otherwise a description of the failure and an exit code for it: 127 if
+# the command could not be run, 128+N if killed by signal N, else its own
+# exit status. $? is read on the line after system() (nothing between).
+sub run_command {
+    my (@cmd) = @_;
+    system (@cmd);
+    my $status = $?;
+    return ('', 0) if ($status == 0);
+    return ("could not run $cmd[0]: $!", 127) if ($status == -1);
+    return ("$cmd[0] killed by signal " . ($status & 127), 128 + ($status & 127))
+	if ($status & 127);
+    return ("$cmd[0] exited with status " . ($status >> 8), $status >> 8);
+}
 
 # Subroutine to do unveils with error checking while ignoring EPERM and ENOENT with sudo/doas
 # (the two ways unveil can fail on paths the unpriv process doesn't have access to).
@@ -989,6 +1121,14 @@ sub do_unveil {
     die "Cannot unveil $path ($perm): $err\n";
 }
 
+# Escape control characters as \xNN in text from the client before it is
+# logged, so a newline cannot forge a log line. Other text is unchanged.
+sub log_safe {
+    my ($s) = @_;
+    $s =~ s/([\x00-\x1f\x7f])/sprintf ("\\x%02x", ord ($1))/ge;
+    return $s;
+}
+
 # Subroutine to die with security error message and log it.
 sub security_die {
     my ($message) = @_;
@@ -997,7 +1137,7 @@ sub security_die {
     eval {
 	my $LOG = open_log_file_secure();
 	my $timestamp = localtime (time());
-	my $remote = $ENV{'SSH_CONNECTION'} || 'local';
+	my $remote = log_safe ($ENV{'SSH_CONNECTION'} || 'local');
 	print $LOG "$timestamp SECURITY [$remote]: $message\n";
 	close($LOG);
     };
@@ -1113,7 +1253,7 @@ sub dirlist {
     my ($arg, $validate) = @_;
     my (@dirlist, $item);
 
-    @dirlist = split (/,\s+/, $arg);
+    @dirlist = split (/\s*,\s*/, $arg);
     foreach $item (@dirlist) {
 	if ($item eq "\"\"") {
 	    $item = 0;
@@ -1199,7 +1339,7 @@ sub yes_or_no_list {
     my ($entry, $arg) = @_;
     my (@in_list, $in, @yn_list);
 
-    @in_list = split (/,\s+/, $arg);
+    @in_list = split (/\s*,\s*/, $arg);
     foreach $in (@in_list) {
 	push (@yn_list, yes_or_no ($entry, $in));
     }
@@ -1208,10 +1348,8 @@ sub yes_or_no_list {
 }
 
 # Subroutine to return 1 if server options match.
-# All supplied options must be from list of rsync_options, but not all
-# rsync_options need be in the supplied options.
-# If --relative is in the options, then we allow $RELATIVE_SERVER_OPTIONS,
-# otherwise we allow $STANDARD_SERVER_OPTIONS.
+# All supplied options must be from @POSSIBLE_SERVER_OPTIONS or the entry's
+# rsync_options, but not all rsync_options need be in the supplied options.
 sub server_options_match {
     my ($log_fh, $supplied_options, $avail_options) = @_;
     my (@split_supplied_options, @split_avail_options, $option);
@@ -1224,7 +1362,7 @@ sub server_options_match {
 
     foreach $option (@split_supplied_options) {
 	if (!grep { $_ eq $option } @split_avail_options) {
-	    print $log_fh "$time Disallowed individual option: $option\n";
+	    print $log_fh "$time Disallowed individual option: " . log_safe ($option) . "\n";
 	    return 0;
 	}
     }
@@ -1234,6 +1372,8 @@ sub server_options_match {
 
 # Subroutine to execute a command without invoking shell.
 # Note: Arguments cannot contain whitespace. Use scripts for complex commands.
+# Returns '' if every command succeeded, else a description of the first
+# failure; commands after a failed one in a ";" chain are not run.
 sub exec_command {
     my ($command, $allow_multiple) = @_;
     my (@commands, @command);
@@ -1246,7 +1386,9 @@ sub exec_command {
     }
 
     foreach $command (@commands) {
-	@command = split (/\s+/, $command);
-	system (@command);
+	@command = split (' ', $command);
+	my ($err) = run_command (@command);
+	return ($err) if ($err);
     }
+    return ('');
 }
